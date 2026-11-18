@@ -300,7 +300,7 @@ Rekent je leverancier af per uur in plaats van per kwartier? Zet dan **Uurprijze
 
 ## Met dank aan
 
-Gebouwd op het Zendure-pakket en het dynamische-prijzenpakket van **Gielz**. Prijzen komen uit de Nordpool-integratie, de zonvoorspelling uit Solcast.
+Gebouwd op het Zendure-pakket van **Gielz**. Prijzen komen uit de Nordpool-integratie, de zonvoorspelling uit Solcast.
 
 ---
 
