@@ -4,6 +4,8 @@ Een slimme laad- en ontlaadstrategie voor Zendure-thuisbatterijen in Home Assist
 
 Versie: 18 november 2026.
 
+![Dashboard: status en de grafiek met prijs, plan en verwachte batterijstand voor vandaag en morgen](screens/planning-status-grafiek.png)
+
 ---
 
 ## Inhoud van het pakket
@@ -116,6 +118,8 @@ Open het tabblad **Instellingen**. Het blok **Controle** controleert:
 
 Zet **Strategie Actief** pas aan als er geen rode melding meer staat. Zolang de schakelaar uit staat, rekent alles mee, maar verandert er niets aan je batterij. De enige uitzondering is de fasebewaking van de aanvulling reeks, als je die gebruikt.
 
+![Tabblad Instellingen: het blok Controle zonder meldingen, en de instellingen voor prijzen, vermogen en rendement](screens/instellingen-controle.png)
+
 ---
 
 ## Zo werkt het
@@ -146,6 +150,9 @@ P1 / Zendure / zon ─► Verbruik meten ─► Verbruiksprofiel (en Kosten bijh
 
    Het lopende blok telt alleen de tijd die nog over is. Bij blokken van 30 minuten of korter worden losse blokken N, H of O tussen twee gelijke buren gladgestreken. Zo wisselt de batterij niet voor een paar tienden van een cent van modus.
 4. **Simulatie** (`sensor.strategie_simulatie`) rekent het plan kwartier voor kwartier door. Dat geeft de verwachte batterijstand en de energiestromen, die het dashboard toont.
+
+   ![Planning in tijden: per blok wat de batterij doet, met welke Gielz-modus en de verwachte batterijstand](screens/planning-tijden.png)
+
 5. **Gewenste modus** (`sensor.strategie_gewenste_modus`) geeft de Gielz-modus voor het huidige kwartier. Is de batterij vol tijdens een laadkwartier, dan wordt dat *Alleen slim opladen*. Zit de batterij op de reserve tijdens een ontlaadkwartier, dan wordt dat *Nul op de meter*.
 6. **Modus sturen** zet de Gielz-modus, maar alleen met Strategie Actief aan. Valt het plan 5 minuten weg, of zijn de prijzen of het plan 16 minuten of langer niet bijgewerkt, dan gaat de batterij terug naar Nul op de meter.
 7. **Verbruik meten en bijleren** leest elk kwartier de meterstanden van de P1-meter, de Zendure en de zonnemeter. Daaruit rekent het het huisverbruik uit, en schuift het verbruiksprofiel van dat uur een stukje richting de meting.
@@ -192,6 +199,10 @@ Allemaal op het tabblad **Instellingen** van het dashboard.
 - verbruik uit het net.
 
 Het resultaat staat op het tabblad **Kosten**, in het blok *Werkelijk*, voor vandaag en de vier dagen daarvoor. De automatisering verandert niets aan de batterij. Zonder deze automatisering werkt de strategie gewoon. Het blok *Werkelijk* meldt dan dat de kosten niet worden bijgehouden; de verwachting voor vandaag en morgen blijft wel zichtbaar.
+
+| Verwacht: rest van vandaag en morgen | Werkelijk: vandaag en de afgelopen 4 dagen |
+|---|---|
+| ![Tabblad Kosten: verwachte kosten en opbrengst van de batterij](screens/kosten-verwacht.png) | ![Tabblad Kosten: werkelijke kosten en opbrengst per dag](screens/kosten-werkelijk.png) |
 
 ### Aanvulling reeks en fasebeperking
 
