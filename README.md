@@ -2,7 +2,7 @@
 
 Een slimme laad- en ontlaadstrategie voor Zendure-thuisbatterijen in Home Assistant, gebouwd op het Zendure-pakket van Gielz. De strategie werkt met de entiteiten van dat pakket (`zendure_2400_ac_…`). De strategie kijkt naar de dynamische stroomprijzen van vandaag en morgen, de zonvoorspelling en je eigen verbruikspatroon. Daarmee kiest hij per kwartier (of per blok) wat de batterij het beste kan doen, en zet de Gielz-modus daarop.
 
-Versie: 18 november 2026.
+Versie: 0.1 (18 november 2026). Wijzigingen staan in [CHANGELOG.md](CHANGELOG.md).
 
 ![Dashboard: status en de grafiek met prijs, plan en verwachte batterijstand voor vandaag en morgen](screens/planning-status-grafiek.png)
 
