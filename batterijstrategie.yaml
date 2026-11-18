@@ -1,0 +1,784 @@
+# =============================================================================
+# Batterijstrategie – centrale sensoren
+# Plaats dit bestand in /config/packages/
+# en herlaad daarna "Alle YAML-configuratie" (Ontwikkelaarshulpmiddelen > YAML).
+#
+# EIGEN BRONNEN: vul alleen het blok "Strategie bronnen" hieronder in (direct
+# onder "template:"). De rest van het bestand leest de bronnen daar vandaan.
+#
+# Geen terugvalwaarden: ontbreekt een prijs of een instelling, dan wordt een
+# sensor "niet beschikbaar" in plaats van met een aangenomen waarde te rekenen.
+#
+# Inhoud: de rekensensoren (prijzen, invoer, simulatie, plan, gewenste modus,
+# reeks, planblok, import- en exportprijs nu), alle instellingen en opslag van
+# de strategie. Na het neerzetten: Ontwikkelaarshulpmiddelen > YAML >
+# "Alle YAML-configuratie" herladen.
+#
+# De automatiseringen staan in losse bestanden die je in de UI plakt
+# (Automatisering maken > Bewerken in YAML):
+#   automatisering_modus_sturen.yaml         nodig
+#   automatisering_verbruik_meten.yaml       nodig (meet elk kwartier en leert het
+#                                            verbruiksprofiel)
+#   automatisering_kosten_bijhouden.yaml     optioneel (werkelijke kosten op het
+#                                            dashboard)
+#
+# De planner rekent met het max. oplaad- en ontlaadvermogen van Gielz
+# (input_number.zendure_2400_ac_max_oplaadvermogen / _max_ontlaadvermogen).
+#
+# AANVULLING REEKS EN FASEBEPERKING (optioneel): staat ook
+# batterijstrategie_reeks.yaml in /config/packages, dan rekent de planner met
+# de plafonds en het reeksvermogen uit dat bestand, en stuurt de automatisering
+# uit dat pakket (automatisering_vermogen.yaml) het vermogen van Gielz. Dit is
+# een bewuste aan/uit-keuze, geen terugvalwaarde: de planner kijkt of
+# input_number.strategie_vermogen_bij_reeks bestaat.
+#
+# ── sensor.strategie_prijzen ────────────────────────────────────────────────
+# Per kwartier (vandaag + morgen, zodra bekend) de import- en terugleverprijs.
+#   import  = (kale prijs + opslag + energiebelasting) x (1 + btw)
+#   kale prijs = de Nordpool-prijs van het kwartier, of met Strategie uurprijzen
+#             aan het gemiddelde van de kwartieren van dat klokuur
+#   export  = kale prijs + exportvergoeding,
+#             x (1 + zonbonus%) als de zonbonus aan staat, het kwartier tussen
+#             zonsopkomst en zonsondergang begint en de som positief is
+# Uitzondering: staat het huidige kwartier niet in de prijslijst, dan
+# gebruiken de toestand en import_nu de actuele waarde van de Nordpool-sensor.
+# Attributen: start (unix), interval_s, eind_morgen (unix, middernacht na
+#   morgen; tot daar loopt de invoer), morgen_bekend, import, export,
+#   kwartier_nu (index van het huidige kwartier in de lijsten; de enige plek
+#   waar het huidige kwartier wordt bepaald), import_nu
+# Toestand: terugleverprijs van het huidige kwartier.
+#
+# ── sensor.strategie_invoer ─────────────────────────────────────────────────
+# Per kwartier zon en verbruik in kWh, vanaf het eerste kwartier van de
+# prijzen (zelfde start en kwartierlengte) tot het eind van morgen, ook als de
+# prijzen van morgen er nog niet zijn. De planner, de simulatie en de
+# kostenverwachting gebruiken alleen de kwartieren waarvoor prijzen zijn; de
+# rest is voor de grafiek en de zonverwachting van morgen.
+#   zon[i]      = (1 - z) x P50 + z x P10 van Solcast, z = zon-voorzichtigheid;
+#                 een Solcast-periode van 30 minuten wordt gelijk over de
+#                 kwartieren erin verdeeld
+#   verbruik[i] = verbruiksprofiel van het uur van kwartier i (W) x kwartierlengte
+# Zijn zon_vandaag en zon_morgen leeg (geen zonnepanelen), dan is zon overal 0.
+# Is een ingevulde zonvoorspelling niet beschikbaar, dan is de invoer niet
+# beschikbaar (geen plan zonder zon dat onnodig uit het net laadt).
+# Attributen: start, interval_s, zon, verbruik
+# Toestand: aantal kwartieren (tot het eind van morgen).
+#
+# ── sensor.strategie_simulatie ──────────────────────────────────────────────
+# Rekent het plan (sensor.strategie_plan) kwartier voor kwartier door met de
+# prijzen, zon en verbruik hierboven en de batterij-instellingen. Dit is de
+# enige plek waar die doorrekening gebeurt; verwachte stand en kostentabel
+# lezen de uitkomst. Kwartieren vóór het huidige plan staan op null / 0.
+# Ontbreekt een invoer of instelling, dan is de sensor niet beschikbaar.
+# Attributen (kWh per kwartier, uit/naar de batterij gezien):
+#   soc_start      batterijstand (%) bij het begin van de simulatie
+#   reeks          per kwartier true als het een C of X in een reeks is (buurkwartier
+#                  met dezelfde letter, of het huidige kwartier volgens
+#                  sensor.strategie_reeks); dan geldt het reeksvermogen. Alleen
+#                  met de aanvulling reeks; zonder is alles false
+#   soc            verwachte batterijstand (%) aan het einde van elk kwartier
+#   laden_net      geladen uit het net
+#   laden_zon      geladen met zonne-overschot
+#   ontladen_huis  ontladen voor eigen verbruik
+#   ontladen_net   ontladen naar het net
+# Toestand: verwachte batterijstand (%) aan het einde van het huidige kwartier.
+# =============================================================================
+
+template:
+  # ── Strategie bronnen ─────────────────────────────────────────────────────
+  # DE ENIGE PLEK OM JE EIGEN BRONNEN IN TE VULLEN. Vul achter elke naam
+  # je eigen entity_id in. De rekensensoren en de automatiseringen lezen de
+  # bronnen uit deze sensor (sensor.strategie_bronnen).
+  #   zon_vandaag/morgen         Solcast-voorspelling met het attribuut
+  #                              detailedForecast
+  #   zon_opbrengst              OPTIONEEL: totale zonne-opbrengst (meterstand, Wh,
+  #                              kWh of MWh). Leeg ("") = geen zonnepanelen: de
+  #                              opbrengst telt dan als 0.
+  #   net_verbruik               totale afname van het net (P1, Wh, kWh of MWh)
+  #   net_teruglevering          totale teruglevering aan het net (P1, Wh, kWh of MWh)
+  # De Zendure-entiteiten (zendure_2400_ac_...) komen van het Gielz-pakket en
+  # hebben voor iedereen dezelfde naam. De Nordpool-sensor (HACS, met de
+  # attributen raw_today, raw_tomorrow en tomorrow_valid) wordt gelezen uit
+  # Gielz' eigen input_text.dynamisch_nordpool_sensor. Die staan hier daarom niet.
+  - sensor:
+      - name: "Strategie bronnen"
+        unique_id: strategie_bronnen
+        icon: mdi:database-cog
+        state: "ok"
+        attributes:
+          # Voorbeeld Solcast: sensor.solcast_pv_forecast_forecast_today / _tomorrow
+          zon_vandaag: ""
+          zon_morgen: ""
+          # Voorbeeld: sensor.envoy_<serienummer>_lifetime_energy_production
+          zon_opbrengst: ""
+          # Voorbeeld HomeWizard P1: sensor.p1_meter_<id>_totaal_verbruik / _totaal_teruglevering
+          net_verbruik: ""
+          net_teruglevering: ""
+
+  # ── Strategie prijzen ─────────────────────────────────────────────────────
+  # Trigger-gebaseerd: alles (lijsten en huidig kwartier) wordt één keer per
+  # wijziging en op elke kwartiergrens uitgerekend, in de variables-stap.
+  - triggers:
+      - trigger: homeassistant
+        event: start
+      - trigger: event
+        event_type: event_template_reloaded
+      - trigger: time_pattern
+        minutes: "/15"
+      - trigger: state
+        entity_id:
+            # Signaal dat de prijzen veranderd zijn: Gielz' kopie van de
+            # Nordpool-sensor en de instelling welke Nordpool-sensor dat is.
+            # De prijzen zelf komen uit de Nordpool-sensor (np hieronder).
+            - sensor.dynamisch_nordpool
+            - input_text.dynamisch_nordpool_sensor
+            - input_number.strategie_opslag_leverancier
+            - input_number.strategie_energiebelasting
+            - input_number.strategie_btw
+            - input_number.strategie_exportvergoeding
+            - input_number.strategie_zonbonus_percentage
+            - input_boolean.strategie_zonbonus_terugleveren
+            - input_boolean.strategie_uurprijzen
+    # Zonsopkomst en -ondergang (voor de zonbonus; integratie Zon is alleen nodig als de zonbonus aan staat): alleen als die tijden veranderen, niet bij elke zonnestand.
+      - trigger: state
+        entity_id: sun.sun
+        attribute: next_rising
+      - trigger: state
+        entity_id: sun.sun
+        attribute: next_setting
+    actions:
+      - variables:
+          np: "{{ states('input_text.dynamisch_nordpool_sensor') }}"
+          pr: >
+            {% set rt = state_attr(np, 'raw_today') or [] %}
+            {% set ok = (rt | length) >= 2
+               and is_number(states('input_number.strategie_opslag_leverancier'))
+               and is_number(states('input_number.strategie_energiebelasting'))
+               and is_number(states('input_number.strategie_btw'))
+               and is_number(states('input_number.strategie_exportvergoeding'))
+               and is_number(states('input_number.strategie_zonbonus_percentage'))
+               and states('input_boolean.strategie_zonbonus_terugleveren') in ['on', 'off']
+               and states('input_boolean.strategie_uurprijzen') in ['on', 'off']
+               and (is_state('input_boolean.strategie_zonbonus_terugleveren', 'off')
+                    or (state_attr('sun.sun', 'next_rising') is not none
+                        and state_attr('sun.sun', 'next_setting') is not none)) %}
+            {% if not ok %}{{ none }}{% else %}
+            {% set rm = (state_attr(np, 'raw_tomorrow') or []) if state_attr(np, 'tomorrow_valid') else [] %}
+            {% set opslag = states('input_number.strategie_opslag_leverancier') | float %}
+            {% set eb = states('input_number.strategie_energiebelasting') | float %}
+            {% set btw = states('input_number.strategie_btw') | float / 100 %}
+            {% set expv = states('input_number.strategie_exportvergoeding') | float %}
+            {% set zbon = is_state('input_boolean.strategie_zonbonus_terugleveren', 'on') %}
+            {% set zb = states('input_number.strategie_zonbonus_percentage') | float / 100 %}
+            {# Zonsopkomst en -ondergang (integratie Zon, sun.sun) zijn alleen nodig als de zonbonus aan staat #}
+            {% set zr = (as_timestamp(state_attr('sun.sun', 'next_rising')) | timestamp_custom('%H:%M')) if zbon else '' %}
+            {% set zs = (as_timestamp(state_attr('sun.sun', 'next_setting')) | timestamp_custom('%H:%M')) if zbon else '' %}
+            {% set nu = now().timestamp() %}
+            {# Uurprijzen (voor leveranciers die per uur afrekenen): de kale prijs van elk kwartier wordt het gemiddelde van de kwartieren van dat klokuur; daarna gaan opslag, belasting, btw en zonbonus er per kwartier overheen #}
+            {% set uur = is_state('input_boolean.strategie_uurprijzen', 'on') %}
+            {% set lijst = rt + rm %}
+            {% set hk = namespace(v=[]) %}
+            {% for x in lijst %}{% set hk.v = hk.v + [{'h': (as_timestamp(x.start) // 3600) | int, 'v': x.value}] %}{% endfor %}
+            {% set ns = namespace(imp=[], exp=[], ix=none) %}
+            {% for x in lijst %}
+              {% set kaal = ((hk.v | selectattr('h', 'eq', hk.v[loop.index0].h) | map(attribute='v') | list) | average) if uur else x.value %}
+              {% set ns.imp = ns.imp + [((kaal + opslag + eb) * (1 + btw)) | round(5)] %}
+              {% set k = kaal + expv %}
+              {% set tod = as_timestamp(x.start) | timestamp_custom('%H:%M') %}
+              {% set ns.exp = ns.exp + [((k * (1 + zb)) if (zbon and zr <= tod and tod < zs and k > 0) else k) | round(5)] %}
+              {% if ns.ix is none and as_timestamp(x.start) <= nu and nu < as_timestamp(x.end) %}{% set ns.ix = loop.index0 %}{% endif %}
+            {% endfor %}
+            {% if ns.ix is not none %}
+              {% set en = ns.exp[ns.ix] %}{% set inu = ns.imp[ns.ix] %}
+            {% else %}
+              {# Huidig kwartier niet in de lijst: terug op de actuele Nordpool-waarde #}
+              {% set kb = states(np) | float %}
+              {% set k = kb + expv %}
+              {% set tod = now().strftime('%H:%M') %}
+              {% set en = ((k * (1 + zb)) if (zbon and zr <= tod and tod < zs and k > 0) else k) | round(5) %}
+              {% set inu = ((kb + opslag + eb) * (1 + btw)) | round(5) %}
+            {% endif %}
+            {{ {'start': as_timestamp(rt[0].start) | int,
+                'interval_s': (as_timestamp(rt[0].end) - as_timestamp(rt[0].start)) | round(0) | int,
+                'eind_morgen': ((as_timestamp(rt[0].start) | as_datetime | as_local) + timedelta(days=2)).replace(hour=0, minute=0, second=0, microsecond=0) | as_timestamp | int,
+                'morgen_bekend': state_attr(np, 'tomorrow_valid') == true,
+                'import': ns.imp, 'export': ns.exp,
+                'kwartier_nu': ns.ix, 'import_nu': inu, 'export_nu': en} }}
+            {% endif %}
+    sensor:
+      - name: "Strategie prijzen"
+        unique_id: strategie_prijzen
+        unit_of_measurement: "EUR/kWh"
+        icon: mdi:cash-clock
+        availability: "{{ pr is mapping }}"
+        state: "{{ pr.export_nu }}"
+        attributes:
+          start: "{{ pr.start }}"
+          interval_s: "{{ pr.interval_s }}"
+          eind_morgen: "{{ pr.eind_morgen }}"
+          morgen_bekend: "{{ pr.morgen_bekend }}"
+          import: "{{ pr.import }}"
+          export: "{{ pr.export }}"
+          kwartier_nu: "{{ pr.kwartier_nu }}"
+          import_nu: "{{ pr.import_nu }}"
+
+  - sensor:
+      - name: "Strategie invoer"
+        unique_id: strategie_invoer
+        icon: mdi:solar-power-variant
+        availability: >
+          {% set prof = states('input_text.strategie_verbruiksprofiel_per_uur').split(',') %}
+          {# Ingevulde zonvoorspellingen moeten een voorspelling hebben; een leeg veld = geen zonnepanelen #}
+          {% set zb = [state_attr('sensor.strategie_bronnen', 'zon_vandaag'), state_attr('sensor.strategie_bronnen', 'zon_morgen')] | select('string') | reject('eq', '') | list %}
+          {{ has_value('sensor.strategie_bronnen')
+             and has_value('sensor.strategie_prijzen')
+             and is_number(state_attr('sensor.strategie_prijzen', 'start'))
+             and is_number(state_attr('sensor.strategie_prijzen', 'interval_s'))
+             and is_number(state_attr('sensor.strategie_prijzen', 'eind_morgen'))
+             and state_attr('sensor.strategie_prijzen', 'import') is list
+             and (prof | length) == 24
+             and (zb | map('state_attr', 'detailedForecast') | select('list') | list | length) == (zb | length)
+             and (prof | select('is_number') | list | length) == 24
+             and is_number(states('input_number.strategie_zon_voorzichtigheid')) }}
+        state: >
+          {% set pz = 'sensor.strategie_prijzen' %}
+          {{ [(state_attr(pz, 'import') or []) | length, (state_attr(pz, 'eind_morgen') - state_attr(pz, 'start')) // state_attr(pz, 'interval_s')] | max | int }}
+        attributes:
+          start: "{{ state_attr('sensor.strategie_prijzen', 'start') }}"
+          interval_s: "{{ state_attr('sensor.strategie_prijzen', 'interval_s') }}"
+          verbruik: >
+            {% set pz = 'sensor.strategie_prijzen' %}
+            {% set t0 = state_attr(pz, 'start') %}
+            {% set slot_s = state_attr(pz, 'interval_s') %}
+            {% set n = [(state_attr(pz, 'import') or []) | length, (state_attr(pz, 'eind_morgen') - t0) // slot_s] | max | int %}
+            {% set lp = states('input_text.strategie_verbruiksprofiel_per_uur').split(',') | map('float') | list %}
+            {% set ns = namespace(o=[]) %}
+            {% for i in range(n) %}
+              {% set hh = (t0 + i * slot_s) | timestamp_custom('%H') | int %}
+              {% set ns.o = ns.o + [lp[hh] / 1000 * slot_s / 3600] %}
+            {% endfor %}
+            {{ ns.o }}
+          zon: >
+            {% set pz = 'sensor.strategie_prijzen' %}
+            {% set t0 = state_attr(pz, 'start') %}
+            {% set slot_s = state_attr(pz, 'interval_s') %}
+            {% set n = [(state_attr(pz, 'import') or []) | length, (state_attr(pz, 'eind_morgen') - t0) // slot_s] | max | int %}
+            {% set zw = states('input_number.strategie_zon_voorzichtigheid') | float / 100 %}
+            {% set cnt = [1800 // slot_s, 1] | max %}
+            {% set ns = namespace(o=[]) %}
+            {% for i in range(n) %}{% set ns.o = ns.o + [0] %}{% endfor %}
+            {% set bz = 'sensor.strategie_bronnen' %}
+            {% for src in [state_attr(bz, 'zon_vandaag'), state_attr(bz, 'zon_morgen')] | select('string') | select('has_value') %}
+              {% for f in state_attr(src, 'detailedForecast') or [] %}
+                {% set ix = ((as_timestamp(f.period_start) - t0) // slot_s) | int %}
+                {% set p50 = f.pv_estimate | float(0) %}
+                {% set pv = (1 - zw) * p50 + zw * (f.pv_estimate10 | float(p50)) %}
+                {% for j in range(cnt) %}
+                  {% if (ix + j) >= 0 and (ix + j) < n %}
+                    {% set ns.o = ns.o[:ix + j] + [ns.o[ix + j] + pv * 0.5 / cnt] + ns.o[ix + j + 1:] %}
+                  {% endif %}
+                {% endfor %}
+              {% endfor %}
+            {% endfor %}
+            {{ ns.o }}
+
+  # ── Strategie planner (plan, simulatie, reeks, gewenste modus, planblok) ──
+  # Eén trigger-blok: planblok, plan, reeks nu en de simulatie worden in één
+  # berekening na elkaar bepaald (rekenstappen hieronder), en de vijf sensoren
+  # lezen die ene uitkomst. Ze lopen daardoor altijd gelijk; er zijn geen
+  # vasthoud-noodgrepen meer nodig. Lopen prijzen en invoer even niet gelijk
+  # (om middernacht of als de prijzen van morgen binnenkomen), dan rekent het
+  # blok niet (voorwaarde) en blijft alles staan tot de invoer bijgewerkt is;
+  # de invoer-wijziging start het blok daarna opnieuw.
+  - triggers:
+      - trigger: homeassistant
+        event: start
+      - trigger: event
+        event_type: event_template_reloaded
+      - trigger: state
+        entity_id:
+            - sensor.strategie_prijzen
+            - sensor.strategie_invoer
+            - sensor.zendure_2400_ac_laadpercentage
+            - sensor.zendure_2400_ac_indicatie_benodigde_energie
+            - input_number.zendure_2400_ac_minimaal_toegestaan_laadpercentage
+            - input_number.zendure_2400_ac_maximaal_toegestaan_laadpercentage
+            - input_number.strategie_rendement_laden
+            - input_number.strategie_rendement_ontladen
+            - input_number.strategie_minimale_winstmarge
+            - input_number.strategie_slijtagekosten
+            - input_number.strategie_vermogen_bij_reeks
+            - input_number.strategie_laadvermogen_planning
+            - input_number.strategie_ontlaadvermogen_planning
+            - input_number.strategie_planblok_minuten
+      - trigger: state
+        id: gielz_vermogen
+        entity_id:
+            - input_number.zendure_2400_ac_max_oplaadvermogen
+            - input_number.zendure_2400_ac_max_ontlaadvermogen
+    conditions:
+      - alias: Met de reeks-aanvulling rekent de planner met eigen plafonds; een wijziging van het Gielz-vermogen (door de fasebeperking) start hem dan niet
+        condition: template
+        value_template: "{{ not (trigger.id == 'gielz_vermogen' and states.input_number.strategie_vermogen_bij_reeks is not none) }}"
+      - alias: Invoer loopt gelijk met de prijzen (of is niet beschikbaar)
+        condition: template
+        value_template: |-
+          {% set pz = 'sensor.strategie_prijzen' %}{% set iv = 'sensor.strategie_invoer' %}{{ not (has_value(pz) and has_value(iv) and (state_attr(iv, 'start') != state_attr(pz, 'start') or state_attr(iv, 'interval_s') != state_attr(pz, 'interval_s') or ((state_attr(iv, 'zon') or []) | length) < ((state_attr(pz, 'import') or []) | length))) }}
+    actions:
+      - variables:
+          kw: "{{ state_attr('sensor.strategie_prijzen', 'kwartier_nu') }}"
+          # Reserve die snel ontladen in de batterij laat (deel van de capaciteit). De enige plek: planner, simulatie en gewenste modus lezen hem hier.
+          reserve: 0.05
+          rest: >-
+            {# Deel van het lopende kwartier dat nog over is (0-1), in hele minuten naar boven afgerond #}
+            {% set pz = 'sensor.strategie_prijzen' %}{% set i = state_attr(pz, 'kwartier_nu') %}
+            {% if i is number and is_number(state_attr(pz, 'start')) and is_number(state_attr(pz, 'interval_s')) %}{% set sl = state_attr(pz, 'interval_s') %}{% set over = ((state_attr(pz, 'start') + (i + 1) * sl - now().timestamp()) / 60) | round(0, 'ceil') %}{{ [[over * 60 / sl, 0] | max, 1] | min }}{% else %}1{% endif %}
+          blok: |-
+            {% if is_number(states('input_number.strategie_planblok_minuten')) and is_number(state_attr('sensor.strategie_prijzen', 'kwartier_nu')) and is_number(state_attr('sensor.strategie_prijzen', 'start')) and is_number(state_attr('sensor.strategie_prijzen', 'interval_s')) %}{# Begin van het huidige planblok, afgeleid van het huidige kwartier in sensor.strategie_prijzen (kwartier_nu; start = vandaag 00:00). #}
+            {% set pz = 'sensor.strategie_prijzen' %}
+            {% set m = ([((states('input_number.strategie_planblok_minuten') | float) / 15) | round(0), 1] | max) * 15 %}
+            {% set s = m * 60 %}
+            {{ (state_attr(pz, 'start') + ((state_attr(pz, 'kwartier_nu') * state_attr(pz, 'interval_s')) // s) * s) | int }}{% else %}{{ none }}{% endif %}
+      - variables:
+          vm: |-
+            {# Vermogens waar planner en simulatie mee rekenen (W). Met de reeks-aanvulling (input_number.strategie_vermogen_bij_reeks bestaat): de plafonds en het reeksvermogen uit batterijstrategie_reeks.yaml. Zonder: het max. oplaad- en ontlaadvermogen van Gielz, zonder reeks. #}
+            {% if states.input_number.strategie_vermogen_bij_reeks is not none %}{{ {'laad': states('input_number.strategie_laadvermogen_planning'), 'ontlaad': states('input_number.strategie_ontlaadvermogen_planning'), 'reeks': states('input_number.strategie_vermogen_bij_reeks')} }}{% else %}{{ {'laad': states('input_number.zendure_2400_ac_max_oplaadvermogen'), 'ontlaad': states('input_number.zendure_2400_ac_max_ontlaadvermogen'), 'reeks': none} }}{% endif %}
+      - variables:
+          plan_ok: |-
+            {{ has_value('sensor.strategie_prijzen') and state_attr('sensor.strategie_prijzen', 'import') is list and state_attr('sensor.strategie_prijzen', 'export') is list and is_number(state_attr('sensor.strategie_prijzen', 'start')) and is_number(state_attr('sensor.strategie_prijzen', 'interval_s')) and has_value('sensor.strategie_invoer') and state_attr('sensor.strategie_invoer', 'zon') is list and state_attr('sensor.strategie_invoer', 'verbruik') is list and is_number(state_attr('sensor.zendure_2400_ac_indicatie_benodigde_energie', 'totale_capaciteit_kwh')) and is_number(states('sensor.zendure_2400_ac_laadpercentage')) and blok is number and is_number(states('input_number.zendure_2400_ac_minimaal_toegestaan_laadpercentage')) and is_number(states('input_number.zendure_2400_ac_maximaal_toegestaan_laadpercentage')) and is_number(states('input_number.strategie_rendement_laden')) and is_number(states('input_number.strategie_rendement_ontladen')) and is_number(states('input_number.strategie_minimale_winstmarge')) and is_number(states('input_number.strategie_slijtagekosten')) and vm is mapping and is_number(vm.laad) and is_number(vm.ontlaad) and (vm.reeks is none or is_number(vm.reeks)) and is_number(states('input_number.strategie_planblok_minuten')) }}
+      - variables:
+          plan: |-
+            {% if not plan_ok %}{{ none }}{% else %}{# Prijzen per kwartier uit sensor.strategie_prijzen, zon en verbruik per kwartier uit sensor.strategie_invoer. Kiest per blok N, H, O, C of X. Geen terugvalwaarden: ontbreekt een invoer of instelling (plan_ok), dan is het plan none en de sensor niet beschikbaar. Lopen prijzen en invoer even niet gelijk, dan rekent het blok niet (zie de voorwaarde) en blijft alles staan tot de invoer bijgewerkt is. #}
+            {% set pz = 'sensor.strategie_prijzen' %}
+            {% set iv = 'sensor.strategie_invoer' %}
+            {% set imp = state_attr(pz, 'import') %}
+            {% set exl = state_attr(pz, 'export') %}
+            {% set t0 = state_attr(pz, 'start') %}
+            {% set slot_s = state_attr(pz, 'interval_s') %}
+            {# De invoer loopt tot het eind van morgen; de planner rekent alleen met de kwartieren waarvoor prijzen zijn #}
+            {% set sl = state_attr(iv, 'verbruik')[:imp | length] %}
+            {% set spv = state_attr(iv, 'zon')[:imp | length] %}
+            {% set eta_l = states('input_number.strategie_rendement_laden') | float / 100 %}
+            {% set eta_o = states('input_number.strategie_rendement_ontladen') | float / 100 %}
+            {% set marge = states('input_number.strategie_minimale_winstmarge') | float %}
+            {% set wear = states('input_number.strategie_slijtagekosten') | float %}
+            {# Met de reeks-aanvulling gaat snel laden/ontladen in een reeks van meerdere kwartieren met het reeksvermogen. De planner weet tijdens het rekenen nog niet welke kwartieren in een reeks komen, dus rekent hij dan voor elk laad-/ontlaadkwartier met het reeksvermogen (een los kwartier krijgt in werkelijkheid het volle vermogen; de volgende herberekening corrigeert dat). Zonder aanvulling: het vermogen van Gielz. #}
+            {% set prk = (vm.reeks | float / 1000) if vm.reeks is not none else none %}
+            {% set pmax = ([vm.laad | float / 1000, prk] | min) if prk is not none else vm.laad | float / 1000 %}
+            {% set pout = ([vm.ontlaad | float / 1000, prk] | min) if prk is not none else vm.ontlaad | float / 1000 %}
+            {# Nul op de meter, alleen laden en alleen ontladen zijn ook begrensd door het laad- en ontlaadvermogen (plafond, zonder reeks) #}
+            {% set plN = vm.laad | float / 1000 %}{% set poN = vm.ontlaad | float / 1000 %}
+            {% set cap = state_attr('sensor.zendure_2400_ac_indicatie_benodigde_energie', 'totale_capaciteit_kwh') | float %}
+            {% set minsoc = states('input_number.zendure_2400_ac_minimaal_toegestaan_laadpercentage') | float %}
+            {% set maxsoc = states('input_number.zendure_2400_ac_maximaal_toegestaan_laadpercentage') | float %}
+            {% set soc = states('sensor.zendure_2400_ac_laadpercentage') | float %}
+            {% set blok = blok | float %}
+            {% set bmin = ([((states('input_number.strategie_planblok_minuten') | float) / 15) | round(0), 1] | max) * 15 %}
+            {% set U = cap * (maxsoc - minsoc) / 100 %}
+            {% set xr = cap * reserve %}
+            {% set n = imp | length %}
+            {% if state_attr(iv, 'start') != t0 or state_attr(iv, 'interval_s') != slot_s or (sl | length) != n or (spv | length) != n %}onbekend{% elif n < 4 or U <= 0.1 %}onbekend{% else %}
+            {% set e0 = [[cap * (soc - minsoc) / 100, 0] | max, U] | min %}
+            {% set bs = [(bmin * 60 / slot_s) | round(0) | int, 1] | max %}
+            {% set nb = (n + bs - 1) // bs %}
+            {% set hnow = [[((blok - t0) // (bs * slot_s)) | int, 0] | max, nb - 1] | min %}
+            {% set step = U / 20 %}
+            {# Het lopende blok telt alleen de kwartieren vanaf nu, het lopende kwartier naar rato van de resterende tijd (rest); voorbije kwartieren tellen niet mee #}
+            {% set ns = namespace(hp=[], hk=[], hl=[], pvh=[], dtb=[], VV=[], Vc=[], out=[], en=0) %}
+            {% for b in range(nb) %}
+            {% set a = b * bs %}{% set z = [a + bs, n] | min %}
+            {% set g = namespace(w=0, ip=0, ep=0, l=0, pv=0) %}
+            {% for q in range(a, z) %}{% set wq = 0 if q < kw else (rest if q == kw else 1) %}{% set g.w = g.w + wq %}{% set g.ip = g.ip + imp[q] * wq %}{% set g.ep = g.ep + exl[q] * wq %}{% set g.l = g.l + sl[q] * wq %}{% set g.pv = g.pv + spv[q] * wq %}{% endfor %}
+            {% if g.w > 0 %}{% set ns.hp = ns.hp + [g.ip / g.w] %}{% set ns.hk = ns.hk + [g.ep / g.w] %}{% else %}{% set ns.hp = ns.hp + [(imp[a:z] | sum) / (z - a)] %}{% set ns.hk = ns.hk + [(exl[a:z] | sum) / (z - a)] %}{% endif %}
+            {% set ns.hl = ns.hl + [g.l] %}{% set ns.pvh = ns.pvh + [g.pv] %}{% set ns.dtb = ns.dtb + [g.w * slot_s / 3600] %}
+            {% endfor %}
+            {% set fut = ns.hp[hnow:] %}
+            {% set vT = ([eta_o * ((fut | sum) / (fut | length)) - wear * eta_o, 0] | max) * 0.9 %}
+            {% for i in range(21) %}{% set ns.Vc = ns.Vc + [i * step * vT] %}{% endfor %}
+            {% set ns.VV = [ns.Vc] %}
+            {% for t in range(nb - 1, hnow - 1, -1) %}
+            {% set p = ns.hp[t] %}{% set k = ns.hk[t] %}{% set Lh = ns.hl[t] %}{% set pvx = ns.pvh[t] %}{% set cL = plN * ns.dtb[t] %}{% set cO = poN * ns.dtb[t] / eta_o %}
+            {% set dr = [Lh, pvx] | min %}{% set R = Lh - dr %}{% set sur = pvx - dr %}
+            {% set Vn = ns.VV[0] %}
+            {% set ns.Vc = [] %}
+            {% for ei in range(21) %}
+            {% set en = ei * step %}
+            {% set oN = [R / eta_o, en, cO] | min %}
+            {% set sN = [sur, (U - en + oN) / eta_l, cL] | min %}
+            {% set fi = [(en - oN + sN * eta_l) / step, 20] | min %}{% set ii = [fi | int, 19] | min %}
+            {% set best = -(R - oN * eta_o) * p + (sur - sN) * k - wear * oN * eta_o + Vn[ii] * (1 - (fi - ii)) + Vn[ii + 1] * (fi - ii) %}
+            {% set sH = [sur, (U - en) / eta_l, cL] | min %}
+            {% set fi = [(en + sH * eta_l) / step, 20] | min %}{% set ii = [fi | int, 19] | min %}
+            {% set q = -R * p + (sur - sH) * k + Vn[ii] * (1 - (fi - ii)) + Vn[ii + 1] * (fi - ii) %}
+            {% if q > best %}{% set best = q %}{% endif %}
+            {% set fi = [(en - oN) / step, 20] | min %}{% set ii = [fi | int, 19] | min %}
+            {% set q = -(R - oN * eta_o) * p + sur * k - wear * oN * eta_o + Vn[ii] * (1 - (fi - ii)) + Vn[ii + 1] * (fi - ii) %}
+            {% if q > best %}{% set best = q %}{% endif %}
+            {% set tC = [pmax * ns.dtb[t], (U - en) / eta_l] | min %}{% set fC = [sur, tC] | min %}
+            {% set fi = [(en + tC * eta_l) / step, 20] | min %}{% set ii = [fi | int, 19] | min %}
+            {% set q = -(tC - fC) * p - R * p + (sur - fC) * k - marge * tC * eta_l + Vn[ii] * (1 - (fi - ii)) + Vn[ii + 1] * (fi - ii) %}
+            {% if q > best %}{% set best = q %}{% endif %}
+            {% if en > xr + 0.02 %}
+            {% set oX = [pout * ns.dtb[t] / eta_o, en - xr] | min %}{% set dX = oX * eta_o %}{% set tl = [R, dX] | min %}
+            {% set fi = [(en - oX) / step, 20] | min %}{% set ii = [fi | int, 19] | min %}
+            {% set q = -(R - tl) * p + (dX - tl + sur) * k - wear * dX + Vn[ii] * (1 - (fi - ii)) + Vn[ii + 1] * (fi - ii) %}
+            {% if q > best %}{% set best = q %}{% endif %}
+            {% endif %}
+            {% set ns.Vc = ns.Vc + [best] %}
+            {% endfor %}
+            {% set ns.VV = [ns.Vc] + ns.VV %}
+            {% endfor %}
+            {% set ns.en = e0 %}
+            {% for t in range(nb) %}
+            {% if t < hnow %}{% set ns.out = ns.out + ['.' * bs] %}
+            {% else %}
+            {% set p = ns.hp[t] %}{% set k = ns.hk[t] %}{% set Lh = ns.hl[t] %}{% set pvx = ns.pvh[t] %}{% set cL = plN * ns.dtb[t] %}{% set cO = poN * ns.dtb[t] / eta_o %}
+            {% set dr = [Lh, pvx] | min %}{% set R = Lh - dr %}{% set sur = pvx - dr %}
+            {% set Vn = ns.VV[t - hnow + 1] %}
+            {% set en = ns.en %}
+            {% set oN = [R / eta_o, en, cO] | min %}
+            {% set sN = [sur, (U - en + oN) / eta_l, cL] | min %}
+            {% set e2N = en - oN + sN * eta_l %}
+            {% set fi = [e2N / step, 20] | min %}{% set ii = [fi | int, 19] | min %}
+            {% set qN = -(R - oN * eta_o) * p + (sur - sN) * k - wear * oN * eta_o + Vn[ii] * (1 - (fi - ii)) + Vn[ii + 1] * (fi - ii) %}
+            {% set sH = [sur, (U - en) / eta_l, cL] | min %}
+            {% set e2H = en + sH * eta_l %}
+            {% set fi = [e2H / step, 20] | min %}{% set ii = [fi | int, 19] | min %}
+            {% set qH = -R * p + (sur - sH) * k + Vn[ii] * (1 - (fi - ii)) + Vn[ii + 1] * (fi - ii) %}
+            {% set e2O = en - oN %}
+            {% set fi = [e2O / step, 20] | min %}{% set ii = [fi | int, 19] | min %}
+            {% set qO = -(R - oN * eta_o) * p + sur * k - wear * oN * eta_o + Vn[ii] * (1 - (fi - ii)) + Vn[ii + 1] * (fi - ii) %}
+            {% set tC = [pmax * ns.dtb[t], (U - en) / eta_l] | min %}{% set fC = [sur, tC] | min %}
+            {% set e2C = en + tC * eta_l %}
+            {% set fi = [e2C / step, 20] | min %}{% set ii = [fi | int, 19] | min %}
+            {% set qC = -(tC - fC) * p - R * p + (sur - fC) * k - marge * tC * eta_l + Vn[ii] * (1 - (fi - ii)) + Vn[ii + 1] * (fi - ii) %}
+            {% set oX = [pout * ns.dtb[t] / eta_o, [en - xr, 0] | max] | min %}{% set dX = oX * eta_o %}{% set tl = [R, dX] | min %}
+            {% set e2X = en - oX %}
+            {% set fi = [e2X / step, 20] | min %}{% set ii = [fi | int, 19] | min %}
+            {% set qX = (-(R - tl) * p + (dX - tl + sur) * k - wear * dX + Vn[ii] * (1 - (fi - ii)) + Vn[ii + 1] * (fi - ii)) if (en > xr + 0.02) else -999 %}
+            {% set bm = 'N' %}{% set bq = qN %}{% set be = e2N %}
+            {% if qH > bq + 0.0006 %}{% set bm = 'H' %}{% set bq = qH %}{% set be = e2H %}{% endif %}
+            {% if qO > bq + 0.0006 %}{% set bm = 'O' %}{% set bq = qO %}{% set be = e2O %}{% endif %}
+            {% if qC > bq + 0.0002 %}{% set bm = 'C' %}{% set bq = qC %}{% set be = e2C %}{% endif %}
+            {% if qX > bq + 0.0005 %}{% set bm = 'X' %}{% set bq = qX %}{% set be = e2X %}{% endif %}
+            {# Gelijkspel NOM/bewaren (verwacht verbruik gedekt door zon): bewaren als stroom nu goedkoper is dan de waarde van een kWh in de batterij later (marginale waarde uit de terugrekening, incl. zonvoorspelling). Beschermt de batterij tegen onverwacht verbruik in goedkope uren; vult de batterij later toch vol met zon, dan is die waarde laag en blijft het NOM #}
+            {% if bm == 'N' and en > 0.02 and qH >= qN - 0.0006 %}{% set i0 = [(e2H / step) | int, 19] | min %}{% set mv = (Vn[i0 + 1] - Vn[i0]) / step %}{% if (p - wear) * eta_o < mv %}{% set bm = 'H' %}{% set bq = qH %}{% set be = e2H %}{% endif %}{% endif %}
+            {% set ns.out = ns.out + [bm * bs] %}
+            {% set ns.en = be %}
+            {% endif %}
+            {% endfor %}
+            {# Losse blokken gladstrijken: een los blok N, H of O tussen twee gelijke buren (ook N, H of O) krijgt de modus van de buren. Snel laden (C) en snel ontladen (X) worden nooit toegevoegd of weggehaald. Voor het lopende blok geldt als linkerbuur de modus die nu actief is (de huidige gewenste modus): zo blijft een los kwartier ook uit als het aan de beurt is. Alleen bij blokken van 30 minuten of korter: bij langere blokken is een los blok een echte keuze van de planner en geen rekenruis #}
+            {% set actief = {'Nul op de meter': 'N', 'Alleen slim opladen': 'H', 'Alleen slim ontladen': 'O', 'Snel opladen': 'C', 'Snel ontladen': 'X'}.get(states('sensor.strategie_gewenste_modus')) %}
+            {% if bs * slot_s <= 1800 and hnow + 1 < nb and actief in ['N', 'H', 'O'] %}{% set rb = ns.out[hnow + 1][0] %}{% set mb = ns.out[hnow][0] %}{% if rb == actief and mb != actief and mb in ['N', 'H', 'O'] %}{% set ns.out = ns.out[:hnow] + [actief * bs] + ns.out[hnow + 1:] %}{% endif %}{% endif %}
+            {% for t in (range(hnow + 1, nb - 1) if bs * slot_s <= 1800 else []) %}{% set lb = ns.out[t - 1][0] %}{% set rb = ns.out[t + 1][0] %}{% set mb = ns.out[t][0] %}{% if lb == rb and mb != lb and mb in ['N', 'H', 'O'] and lb in ['N', 'H', 'O'] %}{% set ns.out = ns.out[:t] + [lb * bs] + ns.out[t + 1:] %}{% endif %}{% endfor %}
+            {{ (ns.out | join(''))[:n] }}
+            {% endif %}{% endif %}
+      - variables:
+          reeks_nu: |-
+            {# 'Laden' of 'Ontladen' als het huidige kwartier in het plan deel is van een reeks van minstens 2 kwartieren snel laden (C) of snel ontladen (X), anders 'Geen'. Huidig kwartier uit sensor.strategie_prijzen (kwartier_nu). Voorbije kwartieren staan in het plan als '.', daarom onthoudt de sensor via zijn vorige waarde dat het vorige kwartier al bij dezelfde reeks hoorde. #}
+            {% set plan = plan if plan is string else 'unavailable' %}
+            {% set idx = state_attr('sensor.strategie_prijzen', 'kwartier_nu') %}
+            {% set vorige = states('sensor.strategie_reeks') %}
+            {% if not (vm is mapping) or vm.reeks is none %}Geen{% elif not (idx is number) or plan in ['unknown', 'unavailable', 'onbekend', ''] %}Geen{% else %}
+            {% set ch = plan[idx] if idx < (plan | length) else '.' %}
+            {% set nx = plan[idx + 1] if (idx + 1) < (plan | length) else '.' %}
+            {% set pv = plan[idx - 1] if idx > 0 else '.' %}
+            {% set lbl = {'C': 'Laden', 'X': 'Ontladen'} %}
+            {% if ch in lbl and (nx == ch or pv == ch or vorige == lbl[ch]) %}{{ lbl[ch] }}{% else %}Geen{% endif %}
+            {% endif %}
+      - variables:
+          sim: |-
+            {% set pz = 'sensor.strategie_prijzen' %}
+            {% set iv = 'sensor.strategie_invoer' %}
+            {% set n = (state_attr(pz, 'import') or []) | length %}
+            {% set dp = plan if plan is string else '' %}
+            {% set zn = (state_attr(iv, 'zon') or [])[:n] %}
+            {% set vb = (state_attr(iv, 'verbruik') or [])[:n] %}
+            {% set inst = ['input_number.strategie_rendement_laden', 'input_number.strategie_rendement_ontladen', 'input_number.zendure_2400_ac_minimaal_toegestaan_laadpercentage', 'input_number.zendure_2400_ac_maximaal_toegestaan_laadpercentage', 'sensor.zendure_2400_ac_laadpercentage'] %}
+            {% set ok = n >= 4 and (dp | length) == n and (zn | length) == n and (vb | length) == n
+               and state_attr(iv, 'start') == state_attr(pz, 'start')
+               and state_attr(iv, 'interval_s') == state_attr(pz, 'interval_s')
+               and (inst | map('states') | select('is_number') | list | length) == (inst | length)
+               and vm is mapping and is_number(vm.laad) and is_number(vm.ontlaad) and (vm.reeks is none or is_number(vm.reeks))
+               and is_number(state_attr('sensor.zendure_2400_ac_indicatie_benodigde_energie', 'totale_capaciteit_kwh')) %}
+            {% if not ok %}{{ none }}{% else %}
+            {% set slot_s = state_attr(pz, 'interval_s') %}
+            {% set dt = slot_s / 3600 %}
+            {% set eta_l = states('input_number.strategie_rendement_laden') | float / 100 %}
+            {% set eta_o = states('input_number.strategie_rendement_ontladen') | float / 100 %}
+            {% set pmax = vm.laad | float / 1000 %}
+            {% set pout = vm.ontlaad | float / 1000 %}
+            {% set prk = (vm.reeks | float / 1000) if vm.reeks is not none else none %}
+            {% set reeks = reeks_nu %}
+            {% set cap = state_attr('sensor.zendure_2400_ac_indicatie_benodigde_energie', 'totale_capaciteit_kwh') | float %}
+            {% set minsoc = states('input_number.zendure_2400_ac_minimaal_toegestaan_laadpercentage') | float %}
+            {% set maxsoc = states('input_number.zendure_2400_ac_maximaal_toegestaan_laadpercentage') | float %}
+            {% set soc = states('sensor.zendure_2400_ac_laadpercentage') | float %}
+            {% set U = cap * (maxsoc - minsoc) / 100 %}
+            {% set xr = cap * reserve %}
+            {% set e0 = [[cap * (soc - minsoc) / 100, 0] | max, U] | min %}
+            {% set pms = pmax * dt %}{% set pos = pout * dt %}
+            {% set pmsR = (([pmax, prk] | min) * dt) if prk is not none else pms %}{% set posR = (([pout, prk] | min) * dt) if prk is not none else pos %}
+            {% set ns = namespace(en=e0, soc=[], gc=[], sc=[], ud=[], xd=[], rk=[]) %}
+            {% for t in range(n) %}
+            {% set m = dp[t] %}
+            {% if m == '.' or (kw is number and t < kw) %}
+            {% set ns.rk = ns.rk + [false] %}{% set ns.soc = ns.soc + [none] %}{% set ns.gc = ns.gc + [0] %}{% set ns.sc = ns.sc + [0] %}{% set ns.ud = ns.ud + [0] %}{% set ns.xd = ns.xd + [0] %}
+            {% else %}
+            {% set f = rest if t == kw else 1 %}{% set Lh = vb[t] * f %}{% set pvx = zn[t] * f %}
+            {% set dr = [Lh, pvx] | min %}{% set R = Lh - dr %}{% set sur = pvx - dr %}
+            {% set en = ns.en %}
+            {% set inr = prk is not none and ((t > 0 and dp[t - 1] == m) or ((t + 1) < n and dp[t + 1] == m) or ((t == 0 or dp[t - 1] == '.') and reeks == ('Laden' if m == 'C' else 'Ontladen'))) %}
+            {% if m == 'H' %}
+            {% set sH = [sur, (U - en) / eta_l, pms * f] | min %}{% set e2 = en + sH * eta_l %}{% set gc = 0 %}{% set sc = sH %}{% set ud = 0 %}{% set xd = 0 %}
+            {% elif m == 'C' %}
+            {% set tC = [(pmsR if inr else pms) * f, (U - en) / eta_l] | min %}{% set fC = [sur, tC] | min %}{% set e2 = en + tC * eta_l %}{% set gc = tC - fC %}{% set sc = fC %}{% set ud = 0 %}{% set xd = 0 %}
+            {% elif m == 'O' %}
+            {% set oO = [R / eta_o, en, pos * f / eta_o] | min %}{% set e2 = en - oO %}{% set gc = 0 %}{% set sc = 0 %}{% set ud = oO * eta_o %}{% set xd = 0 %}
+            {% elif m == 'X' %}
+            {% set oX = [(posR if inr else pos) * f / eta_o, [en - xr, 0] | max] | min %}{% set dX = oX * eta_o %}{% set tl = [R, dX] | min %}{% set e2 = en - oX %}{% set gc = 0 %}{% set sc = 0 %}{% set ud = tl %}{% set xd = dX - tl %}
+            {% else %}
+            {% set oN = [R / eta_o, en, pos * f / eta_o] | min %}{% set sN = [sur, (U - en + oN) / eta_l, pms * f] | min %}{% set e2 = en - oN + sN * eta_l %}{% set gc = 0 %}{% set sc = sN %}{% set ud = oN * eta_o %}{% set xd = 0 %}
+            {% endif %}
+            {% set ns.rk = ns.rk + [inr and m in ['C', 'X']] %}
+            {% set ns.en = [[e2, 0] | max, U] | min %}
+            {% set ns.soc = ns.soc + [(minsoc + ns.en / cap * 100) | round(3)] %}
+            {% set ns.gc = ns.gc + [gc | round(5)] %}{% set ns.sc = ns.sc + [sc | round(5)] %}{% set ns.ud = ns.ud + [ud | round(5)] %}{% set ns.xd = ns.xd + [xd | round(5)] %}
+            {% endif %}
+            {% endfor %}
+            {{ {'soc_start': (minsoc + e0 / cap * 100) | round(3), 'reeks': ns.rk, 'soc': ns.soc, 'laden_net': ns.gc, 'laden_zon': ns.sc, 'ontladen_huis': ns.ud, 'ontladen_net': ns.xd} }} {% endif %}
+    sensor:
+      - name: Strategie Plan
+        unique_id: strategie_plan
+        icon: mdi:calculator-variant
+        availability: "{{ plan is string }}"
+        state: "{{ plan }}"
+      - name: "Strategie simulatie"
+        unique_id: strategie_simulatie
+        icon: mdi:battery-clock
+        unit_of_measurement: "%"
+        availability: "{{ sim is mapping }}"
+        state: >
+          {% set s = sim.soc | select('number') | list %}
+          {{ (s[0] | round(0)) if s else none }}
+        attributes:
+          start: "{{ state_attr('sensor.strategie_prijzen', 'start') }}"
+          interval_s: "{{ state_attr('sensor.strategie_prijzen', 'interval_s') }}"
+          soc_start: "{{ sim.soc_start }}"
+          reeks: "{{ sim.reeks }}"
+          soc: "{{ sim.soc }}"
+          laden_net: "{{ sim.laden_net }}"
+          laden_zon: "{{ sim.laden_zon }}"
+          ontladen_huis: "{{ sim.ontladen_huis }}"
+          ontladen_net: "{{ sim.ontladen_net }}"
+      - name: Strategie Gewenste Modus
+        unique_id: strategie_gewenste_modus
+        icon: mdi:battery-sync
+        availability: '{{ has_value(''sensor.strategie_prijzen'') and is_number(states(''sensor.zendure_2400_ac_laadpercentage'')) and is_number(states(''input_number.zendure_2400_ac_minimaal_toegestaan_laadpercentage'')) and is_number(states(''input_number.zendure_2400_ac_maximaal_toegestaan_laadpercentage'')) }}'
+        state: |-
+          {# Huidig kwartier uit sensor.strategie_prijzen (kwartier_nu). Plan en modus komen uit dezelfde berekening en lopen dus altijd gelijk. #}
+          {% set plan = plan if plan is string else 'unavailable' %}
+          {% set n = (state_attr('sensor.strategie_prijzen', 'import') or []) | length %}
+          {% set idx = state_attr('sensor.strategie_prijzen', 'kwartier_nu') %}
+          {% set modi = ['Nul op de meter', 'Snel opladen', 'Snel ontladen', 'Alleen slim opladen', 'Alleen slim ontladen'] %}
+          {% if plan in ['unknown', 'unavailable', 'onbekend', ''] %}onbekend{% elif (plan | length) != n %}onbekend{% else %}
+          {% set ch = plan[idx] if (idx is number and idx < (plan | length)) else '.' %}
+          {% set soc = states('sensor.zendure_2400_ac_laadpercentage') | float %}
+          {% set minsoc = states('input_number.zendure_2400_ac_minimaal_toegestaan_laadpercentage') | float %}
+          {% set maxsoc = states('input_number.zendure_2400_ac_maximaal_toegestaan_laadpercentage') | float %}
+          {% if ch == 'C' %}{# Vol tijdens een laadblok: niet ontladen in een goedkoop kwartier, zoals de simulatie ook rekent #}{% if soc >= maxsoc - 0.5 %}Alleen slim opladen{% else %}Snel opladen{% endif %}
+          {% elif ch == 'X' %}{% if soc > minsoc + reserve * 100 %}Snel ontladen{% else %}Nul op de meter{% endif %}
+          {% elif ch == 'H' %}Alleen slim opladen
+          {% elif ch == 'O' %}Alleen slim ontladen
+          {% else %}Nul op de meter{% endif %}
+          {% endif %}
+      - name: Strategie reeks
+        unique_id: strategie_reeks
+        icon: mdi:battery-sync-outline
+        state: "{{ reeks_nu }}"
+      - name: Strategie planblok
+        unique_id: strategie_planblok
+        availability: "{{ blok is number }}"
+        state: "{{ blok }}"
+
+  # ── Importprijs nu, Exportprijs nu ─────────────────────────────────────────
+  - sensor:
+      - name: Strategie Importprijs Nu
+        unique_id: strategie_importprijs_nu
+        icon: mdi:currency-eur
+        unit_of_measurement: EUR/kWh
+        state_class: measurement
+        availability: '{{ has_value(''sensor.strategie_prijzen'') and is_number(state_attr(''sensor.strategie_prijzen'', ''import_nu'')) }}'
+        state: '{{ state_attr(''sensor.strategie_prijzen'', ''import_nu'') }}'
+      - name: Strategie Exportprijs Nu
+        unique_id: strategie_exportprijs_nu
+        icon: mdi:transmission-tower-export
+        unit_of_measurement: EUR/kWh
+        state_class: measurement
+        availability: '{{ has_value(''sensor.strategie_prijzen'') }}'
+        state: '{{ states(''sensor.strategie_prijzen'') }}'
+
+# =============================================================================
+# Instellingen (in te vullen op het tabblad Instellingen van het dashboard).
+# Geen beginwaarde: na een herstart gaan ze verder met de laatste waarde.
+# =============================================================================
+input_boolean:
+  strategie_actief:
+    name: Strategie Actief
+    icon: mdi:battery-sync
+  # Staat bij een nieuwe installatie uit. Aanzetten vereist de integratie Zon
+  # (sun.sun) voor zonsopkomst en -ondergang.
+  strategie_zonbonus_terugleveren:
+    name: Strategie zonbonus terugleveren
+    icon: mdi:white-balance-sunny
+  # Staat bij een nieuwe installatie uit (kwartierprijzen). Zet aan als je
+  # leverancier per uur afrekent: elk kwartier krijgt dan de gemiddelde kale
+  # prijs van zijn klokuur.
+  strategie_uurprijzen:
+    name: Strategie uurprijzen
+    icon: mdi:clock-time-four-outline
+
+input_number:
+  strategie_opslag_leverancier:
+    name: Strategie Opslag Leverancier
+    icon: mdi:cash-plus
+    min: 0.0
+    max: 0.5
+    step: 0.001
+    unit_of_measurement: EUR/kWh
+    mode: box
+  strategie_energiebelasting:
+    name: Strategie Energiebelasting
+    icon: mdi:cash-plus
+    min: 0.0
+    max: 1.0
+    step: 0.001
+    unit_of_measurement: EUR/kWh
+    mode: box
+  strategie_btw:
+    name: Strategie BTW
+    icon: mdi:percent
+    min: 0.0
+    max: 50.0
+    step: 0.1
+    unit_of_measurement: '%'
+    mode: box
+  strategie_exportvergoeding:
+    name: Strategie exportvergoeding
+    icon: mdi:transmission-tower-export
+    min: -0.25
+    max: 0.25
+    step: 0.001
+    unit_of_measurement: €/kWh
+    mode: box
+  strategie_zonbonus_percentage:
+    name: Strategie zonbonus percentage
+    icon: mdi:percent
+    min: 0.0
+    max: 25.0
+    step: 1.0
+    unit_of_measurement: '%'
+    mode: box
+  strategie_minimale_winstmarge:
+    name: Strategie Minimale Winstmarge
+    icon: mdi:cash-check
+    min: 0.0
+    max: 0.5
+    step: 0.001
+    unit_of_measurement: EUR/kWh
+    mode: box
+  strategie_slijtagekosten:
+    name: Strategie slijtagekosten
+    icon: mdi:battery-heart-variant
+    min: 0.0
+    max: 0.2
+    step: 0.0001
+    unit_of_measurement: €/kWh
+    mode: box
+  strategie_rendement_laden:
+    name: Strategie Rendement Laden
+    icon: mdi:battery-arrow-up
+    min: 50.0
+    max: 100.0
+    step: 0.5
+    unit_of_measurement: '%'
+    mode: box
+  strategie_rendement_ontladen:
+    name: Strategie Rendement Ontladen
+    icon: mdi:battery-arrow-down
+    min: 50.0
+    max: 100.0
+    step: 0.5
+    unit_of_measurement: '%'
+    mode: box
+  strategie_zon_voorzichtigheid:
+    name: Strategie zon voorzichtigheid
+    icon: mdi:weather-partly-cloudy
+    min: 0.0
+    max: 100.0
+    step: 5.0
+    unit_of_measurement: '%'
+    mode: slider
+  strategie_planblok_minuten:
+    name: Strategie planblok minuten
+    icon: mdi:timer-cog-outline
+    min: 15.0
+    max: 120.0
+    step: 15.0
+    unit_of_measurement: min
+    mode: box
+  strategie_profiel_leertempo:
+    name: Strategie profiel leertempo
+    icon: mdi:school-outline
+    min: 0.0
+    max: 30.0
+    step: 1.0
+    unit_of_measurement: '% per dag'
+    mode: slider
+
+# Opslag: verbruiksprofiel (24 waarden in W), de laatste kwartiermeting
+# (tijd;meterstanden;verschillen;zon;huis) en de werkelijke tellers per dag
+# (vandaag: datum;;14 tellers, het middelste deel is leeg; dag 1-4: datum;tellers).
+input_text:
+  strategie_verbruiksprofiel_per_uur:
+    name: Strategie Verbruiksprofiel per uur
+    icon: mdi:chart-timeline-variant
+    min: 0
+    max: 255
+    mode: text
+  strategie_kwartiermeting:
+    name: Strategie kwartiermeting
+    icon: mdi:meter-electric-outline
+    min: 0
+    max: 255
+    mode: text
+  strategie_werkelijk_vandaag:
+    name: Strategie werkelijk vandaag
+    icon: mdi:cash-clock
+    min: 0
+    max: 255
+    mode: text
+  strategie_werkelijk_dag_1:
+    name: Strategie werkelijk dag 1
+    icon: mdi:calendar-clock
+    min: 0
+    max: 255
+    mode: text
+  strategie_werkelijk_dag_2:
+    name: Strategie werkelijk dag 2
+    icon: mdi:calendar-clock
+    min: 0
+    max: 255
+    mode: text
+  strategie_werkelijk_dag_3:
+    name: Strategie werkelijk dag 3
+    icon: mdi:calendar-clock
+    min: 0
+    max: 255
+    mode: text
+  strategie_werkelijk_dag_4:
+    name: Strategie werkelijk dag 4
+    icon: mdi:calendar-clock
+    min: 0
+    max: 255
+    mode: text

@@ -1,0 +1,100 @@
+# =============================================================================
+# Batterijstrategie – aanvulling reeks en fasebeperking (optioneel)
+# Plaats dit bestand naast batterijstrategie.yaml in /config/packages/ en
+# herlaad daarna "Alle YAML-configuratie" (Ontwikkelaarshulpmiddelen > YAML).
+# Voeg daarna automatisering_vermogen.yaml toe (Automatisering maken >
+# Bewerken in YAML).
+#
+# Zodra dit bestand er staat, rekent de planner niet meer met het max. oplaad-
+# en ontlaadvermogen van Gielz, maar met de plafonds en het reeksvermogen
+# hieronder (de planner kijkt of input_number.strategie_vermogen_bij_reeks
+# bestaat). De automatisering vermogen zet dan het max. oplaad- en
+# ontlaadvermogen van Gielz:
+#   - strategie aan: het plafond, tijdens een reeks van meerdere kwartieren
+#     snel laden/ontladen het laagste van plafond en reeksvermogen, en bij het
+#     laden begrensd op de fasestroom;
+#   - strategie uit: alleen de fasebewaking; het laden wordt alleen verlaagd
+#     als de fasestroom te hoog wordt, en daarna teruggezet naar de waarde van
+#     vlak voor het verlagen.
+# Haal je dit bestand weg, verwijder dan ook de automatisering vermogen.
+# =============================================================================
+
+template:
+  # ── Strategie bronnen fasebeperking ───────────────────────────────────────
+  # Vul je eigen entity_id's in, of laat beide leeg ("") voor geen
+  # fasebegrenzing (alleen plafond en reeksvermogen). De maximale stroom op de
+  # fase stel je in op het dashboard (Instellingen > Vermogen):
+  # input_number.strategie_max_fasestroom.
+  #   stroom      actuele stroom (A) van de fase waar de batterij op zit, MET
+  #               TEKEN: positief bij afname, negatief bij teruglevering
+  #               (zoals de HomeWizard P1). Zonder teken knijpt hij het laden
+  #               juist af als er veel zon wordt teruggeleverd.
+  #   spanning    spanning (V) van die fase
+  - sensor:
+      - name: "Strategie bronnen fase"
+        unique_id: strategie_bronnen_fase
+        icon: mdi:current-ac
+        state: "ok"
+        attributes:
+          # Voorbeeld HomeWizard P1: sensor.p1_meter_<id>_actuele_stroom_fase_1 / _actuele_spanning_fase_1
+          stroom: ""
+          spanning: ""
+
+input_number:
+  strategie_laadvermogen_planning:
+    name: Strategie laadvermogen los kwartier
+    icon: mdi:battery-charging-high
+    min: 400.0
+    max: 12000.0
+    step: 10.0
+    unit_of_measurement: W
+    mode: box
+  strategie_ontlaadvermogen_planning:
+    name: Strategie ontlaadvermogen los kwartier
+    icon: mdi:battery-arrow-up
+    min: 400.0
+    max: 12000.0
+    step: 10.0
+    unit_of_measurement: W
+    mode: box
+  strategie_vermogen_bij_reeks:
+    name: Strategie laad- en ontlaadvermogen reeks
+    icon: mdi:speedometer-medium
+    min: 400.0
+    max: 12000.0
+    step: 10.0
+    unit_of_measurement: W
+    mode: box
+  # Maximale stroom (A) op de fase waar de batterij op zit, bijv. 23.5 bij
+  # een 25 A-zekering. Alleen gebruikt als de fase-bronnen zijn ingevuld.
+  # Na de eerste installatie staat hij op het minimum (6 A): vul hem in op
+  # het dashboard voordat je de fase-bronnen gebruikt.
+  strategie_max_fasestroom:
+    name: Strategie maximale fasestroom
+    icon: mdi:current-ac
+    min: 6.0
+    max: 63.0
+    step: 0.5
+    unit_of_measurement: A
+    mode: box
+  # Opslag (niet zelf invullen): max. oplaadvermogen van vlak voor een
+  # fasebegrenzing terwijl de strategie uit staat; 0 = niet begrensd.
+  strategie_fase_vrij_vermogen:
+    name: Strategie vermogen voor fasebegrenzing
+    icon: mdi:content-save-outline
+    min: 0.0
+    max: 12000.0
+    step: 10.0
+    unit_of_measurement: W
+    mode: box
+
+# Logboek: de automatisering vermogen draait elke 5 seconden. Zonder deze
+# regel komt elke run als "triggered by time pattern" in het logboek. Zijn
+# eigen meldingen (bijgesteld, verlaagd, terug naar plafond) blijven staan,
+# net als de wijzigingen van het vermogen van Gielz. Staat er in je
+# configuration.yaml al een logbook: met exclude, dan worden de lijsten
+# samengevoegd. Werkt pas na een herstart van Home Assistant.
+logbook:
+  exclude:
+    entities:
+      - automation.zendure_strategie_vermogen

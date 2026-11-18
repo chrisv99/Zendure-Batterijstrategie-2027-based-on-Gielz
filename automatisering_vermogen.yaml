@@ -1,0 +1,252 @@
+# Zendure Strategie - vermogen
+# Hoort bij de aanvulling reeks en fasebeperking (batterijstrategie_reeks.yaml).
+# Pas toevoegen nadat dat bestand er staat en de plafonds, het reeksvermogen en
+# de fase-bronnen (of alle drie leeg) zijn ingevuld.
+# Toevoegen: Instellingen > Automatiseringen > Automatisering maken > Nieuwe
+# automatisering > ⋮ > Bewerken in YAML, alles vervangen door dit bestand en opslaan.
+alias: Zendure Strategie - vermogen
+description: 'Batterijstrategie versie 2026-11-18.1. Stuurt het max. oplaad- en ontlaadvermogen van Gielz (input_number.zendure_2400_ac_max_oplaadvermogen / _max_ontlaadvermogen). Strategie aan (input_boolean.strategie_actief): het oplaadvermogen volgt het plafond (input_number.strategie_laadvermogen_planning), tijdens een laadreeks (sensor.strategie_reeks = Laden) het laagste van plafond en input_number.strategie_vermogen_bij_reeks, en wordt elke 5 seconden verlaagd als de fasestroom (sensor.strategie_bronnen_fase) boven de maximale fasestroom (input_number.strategie_max_fasestroom) komt; het ontlaadvermogen volgt het plafond (input_number.strategie_ontlaadvermogen_planning), tijdens een ontlaadreeks het laagste van plafond en reeksvermogen. Bij uitzetten van de strategie gaan beide eenmalig terug naar hun plafond. Strategie uit: alleen fasebewaking. Komt de fasestroom boven het maximum, dan onthoudt hij het oplaadvermogen van dat moment (input_number.strategie_fase_vrij_vermogen) en verlaagt hij het; zodra er weer ruimte is, zet hij het terug naar die onthouden waarde. Verder laat hij het vermogen dan met rust. Wijzigt een gebruiker het max. oplaadvermogen met de hand, dan wordt die waarde het nieuwe plafond. Zijn de plafonds of het reeksvermogen geen getal (bijvoorbeeld tijdens het herladen), dan stuurt hij plafond en reeks niet (geen aangenomen waarde); de fasebewaking met de strategie uit loopt door. Zijn de twee fase-bronnen (stroom en spanning) leeg, dan is er geen fasebegrenzing; is maar een van beide ingevuld of is een meetwaarde niet beschikbaar, dan verlaagt hij het oplaadvermogen met de strategie aan alleen nog naar plafond of reeksvermogen en verhoogt hij het niet (dus nooit laden zonder fasebewaking), en doet hij met de strategie uit niets.'
+triggers:
+- id: interval
+  seconds: /5
+  trigger: time_pattern
+- entity_id: input_number.zendure_2400_ac_max_oplaadvermogen
+  id: handmatig
+  trigger: state
+- entity_id: input_boolean.strategie_actief
+  id: schakelaar
+  trigger: state
+conditions: []
+actions:
+- alias: Bronnen, instellingen en meetwaarden
+  variables:
+    bron_stroom: '{{ state_attr(''sensor.strategie_bronnen_fase'', ''stroom'') or '''' }}'
+    bron_spanning: '{{ state_attr(''sensor.strategie_bronnen_fase'', ''spanning'') or '''' }}'
+    max_stroom_a: '{{ states(''input_number.strategie_max_fasestroom'') }}'
+    actief: '{{ is_state(''input_boolean.strategie_actief'', ''on'') }}'
+    huidig_max: '{{ states(''input_number.zendure_2400_ac_max_oplaadvermogen'') | float(4000) }}'
+    huidig_ontlaad: '{{ states(''input_number.zendure_2400_ac_max_ontlaadvermogen'') | float(0) }}'
+    laadvermogen: '{{ [states(''sensor.zendure_2400_ac_vermogen_aansturing'') | float(0), 0] | max }}'
+    min_w: '{{ state_attr(''input_number.zendure_2400_ac_max_oplaadvermogen'', ''min'') | float(400) }}'
+    vrij_w: '{{ states(''input_number.strategie_fase_vrij_vermogen'') | float(0) }}'
+    plafond_laad: '{{ states(''input_number.strategie_laadvermogen_planning'') | float if is_number(states(''input_number.strategie_laadvermogen_planning'')) else none }}'
+    plafond_ontlaad: '{{ states(''input_number.strategie_ontlaadvermogen_planning'') | float if is_number(states(''input_number.strategie_ontlaadvermogen_planning'')) else none }}'
+    reeks_w: '{{ states(''input_number.strategie_vermogen_bij_reeks'') | float if is_number(states(''input_number.strategie_vermogen_bij_reeks'')) else none }}'
+- variables:
+    fase_aan: '{{ (bron_stroom | string) != '''' and (bron_spanning | string) != '''' }}'
+    fase_uit: '{{ (bron_stroom | string) == '''' and (bron_spanning | string) == '''' }}'
+    spanning_fase: '{{ states(bron_spanning) | float(230) }}'
+    stroom_fase: '{{ states(bron_stroom) | float(0) }}'
+    standaard_w: '{% if plafond_laad is number and reeks_w is number %}{{ ([plafond_laad, reeks_w] | min) if (actief and is_state(''sensor.strategie_reeks'', ''Laden'')) else plafond_laad }}{% else %}{{ none }}{% endif %}'
+    doel_ontlaad: '{% if plafond_ontlaad is number and reeks_w is number %}{{ (([plafond_ontlaad, reeks_w] | min) if (actief and is_state(''sensor.strategie_reeks'', ''Ontladen'')) else plafond_ontlaad) | int }}{% else %}{{ none }}{% endif %}'
+    instellingen_ok: '{{ plafond_laad is number and plafond_ontlaad is number and reeks_w is number }}'
+- variables:
+    fase_meetbaar: '{{ fase_aan and is_number(max_stroom_a) and is_number(states(bron_stroom)) and is_number(states(bron_spanning)) and is_number(states(''sensor.zendure_2400_ac_vermogen_aansturing'')) }}'
+    fase_grens: '{% if fase_aan and is_number(max_stroom_a) %}{{ [((laadvermogen + (max_stroom_a | float - stroom_fase) * spanning_fase) / 10) | int(0) * 10, min_w] | max | int(0) }}{% else %}{{ none }}{% endif %}'
+- variables:
+    tijdelijke_waarde: '{% if standaard_w is number %}{{ ([fase_grens, standaard_w] | min | int(0)) if fase_grens is number else standaard_w | int(0) }}{% else %}{{ none }}{% endif %}'
+- choose:
+  - alias: 'Handmatige wijziging: nieuw plafond onthouden'
+    conditions:
+    - condition: trigger
+      id: handmatig
+    - condition: template
+      value_template: '{{ trigger.to_state is not none and trigger.to_state.context.user_id is not none and is_number(trigger.to_state.state) }}'
+    sequence:
+    - action: input_number.set_value
+      data:
+        value: '{% set h = ''input_number.strategie_laadvermogen_planning'' %}{{ ([[trigger.to_state.state | float, state_attr(h, ''min'')] | max, state_attr(h, ''max'')] | min / 10) | round(0) * 10 }}'
+      target:
+        entity_id: input_number.strategie_laadvermogen_planning
+    - if:
+      - condition: template
+        value_template: '{{ vrij_w > 0 }}'
+      then:
+      - action: input_number.set_value
+        data:
+          value: 0
+        target:
+          entity_id: input_number.strategie_fase_vrij_vermogen
+    - action: logbook.log
+      data:
+        message: Max. oplaadvermogen handmatig op {{ trigger.to_state.state | int(0) }} W gezet — dit is het nieuwe plafond
+        name: Zendure Strategie vermogen
+  - alias: 'Strategie aangezet: onthouden waarde van de fasebewaking vervalt'
+    conditions:
+    - condition: trigger
+      id: schakelaar
+    - condition: template
+      value_template: '{{ actief and vrij_w > 0 }}'
+    sequence:
+    - action: input_number.set_value
+      data:
+        value: 0
+      target:
+        entity_id: input_number.strategie_fase_vrij_vermogen
+  - alias: 'Strategie uitgezet: eenmalig terug naar de plafonds'
+    conditions:
+    - condition: trigger
+      id: schakelaar
+    - condition: template
+      value_template: '{{ not actief }}'
+    sequence:
+    - if:
+      - condition: template
+        value_template: '{{ instellingen_ok and is_number(states(''input_number.zendure_2400_ac_max_oplaadvermogen'')) and huidig_max | int(0) != plafond_laad | int(0) }}'
+      then:
+      - action: input_number.set_value
+        data:
+          value: '{{ plafond_laad | int(0) }}'
+        target:
+          entity_id: input_number.zendure_2400_ac_max_oplaadvermogen
+    - if:
+      - condition: template
+        value_template: '{{ instellingen_ok and is_number(states(''input_number.zendure_2400_ac_max_ontlaadvermogen'')) and huidig_ontlaad | int(0) != doel_ontlaad }}'
+      then:
+      - action: input_number.set_value
+        data:
+          value: '{{ doel_ontlaad }}'
+        target:
+          entity_id: input_number.zendure_2400_ac_max_ontlaadvermogen
+    - if:
+      - condition: template
+        value_template: '{{ vrij_w > 0 }}'
+      then:
+      - action: input_number.set_value
+        data:
+          value: 0
+        target:
+          entity_id: input_number.strategie_fase_vrij_vermogen
+    - action: logbook.log
+      data:
+        message: Strategie uitgezet — {{ ('max. oplaad- en ontlaadvermogen terug naar het plafond (' ~ (plafond_laad | int(0)) ~ ' / ' ~ doel_ontlaad ~ ' W)') if instellingen_ok else 'plafonds niet beschikbaar, vermogen niet aangepast' }}; vanaf nu alleen fasebewaking
+        name: Zendure Strategie vermogen
+  - alias: 'Strategie aan, elke 5 seconden: oplaadvermogen begrenzen op de fasestroom of terug naar plafond'
+    conditions:
+    - condition: trigger
+      id: interval
+    - condition: template
+      value_template: '{{ actief }}'
+    - alias: Plafonds en reeksvermogen zijn getallen
+      condition: template
+      value_template: '{{ instellingen_ok }}'
+    - alias: Fasebeperking volledig ingesteld met beschikbare meetwaarden, of volledig uit
+      condition: template
+      value_template: '{{ has_value(''sensor.strategie_bronnen_fase'') and is_number(states(''input_number.zendure_2400_ac_max_oplaadvermogen'')) and (fase_uit or fase_meetbaar) }}'
+    - alias: Fasestroom te hoog, of limiet wijkt af van het plafond
+      condition: or
+      conditions:
+      - condition: template
+        value_template: '{{ fase_aan and stroom_fase > max_stroom_a | float }}'
+      - condition: template
+        value_template: '{{ huidig_max | int(0) != standaard_w | int(0) }}'
+    - alias: Nieuwe waarde wijkt af van de huidige
+      condition: template
+      value_template: '{{ tijdelijke_waarde | int(0) != huidig_max | int(0) }}'
+    sequence:
+    - action: input_number.set_value
+      alias: Max. oplaadvermogen bijstellen
+      data:
+        value: '{{ tijdelijke_waarde }}'
+      target:
+        entity_id: input_number.zendure_2400_ac_max_oplaadvermogen
+    - action: logbook.log
+      data:
+        message: '{% if fase_aan %}Fasestroom is {{ stroom_fase | round(1) }} A (max {{ max_stroom_a }} A) — max. oplaadvermogen bijgesteld van {{ huidig_max | int(0) }} naar {{ tijdelijke_waarde }} watt (plafond {{ standaard_w | int(0) }} W){% else %}Max. oplaadvermogen van {{ huidig_max | int(0) }} naar het plafond van {{ tijdelijke_waarde }} watt gezet (geen fasebeperking ingesteld){% endif %}'
+        name: Zendure Strategie vermogen
+  - alias: 'Strategie aan, fasemeting niet bruikbaar: alleen verlagen naar plafond of reeksvermogen, nooit verhogen'
+    conditions:
+    - condition: trigger
+      id: interval
+    - condition: template
+      value_template: '{{ actief and instellingen_ok }}'
+    - alias: Fase-bronnen deels ingevuld, of een meetwaarde niet beschikbaar
+      condition: template
+      value_template: '{{ not (has_value(''sensor.strategie_bronnen_fase'') and (fase_uit or fase_meetbaar)) }}'
+    - condition: template
+      value_template: '{{ is_number(states(''input_number.zendure_2400_ac_max_oplaadvermogen'')) and huidig_max | int(0) > standaard_w | int(0) }}'
+    sequence:
+    - action: input_number.set_value
+      data:
+        value: '{{ standaard_w | int(0) }}'
+      target:
+        entity_id: input_number.zendure_2400_ac_max_oplaadvermogen
+    - action: logbook.log
+      data:
+        message: Fasemeting niet bruikbaar — max. oplaadvermogen verlaagd van {{ huidig_max | int(0) }} naar {{ standaard_w | int(0) }} watt (verhogen gebeurt pas als de meting terug is)
+        name: Zendure Strategie vermogen
+  - alias: 'Strategie uit, fasestroom te hoog: huidige waarde onthouden en verlagen'
+    conditions:
+    - condition: trigger
+      id: interval
+    - condition: template
+      value_template: '{{ not actief and fase_meetbaar and vrij_w == 0 and stroom_fase > max_stroom_a | float and is_number(states(''input_number.zendure_2400_ac_max_oplaadvermogen'')) }}'
+    - condition: template
+      value_template: '{{ [fase_grens, huidig_max] | min | int(0) < huidig_max | int(0) }}'
+    sequence:
+    - action: input_number.set_value
+      data:
+        value: '{{ huidig_max | int(0) }}'
+      target:
+        entity_id: input_number.strategie_fase_vrij_vermogen
+    - action: input_number.set_value
+      data:
+        value: '{{ [fase_grens, huidig_max] | min | int(0) }}'
+      target:
+        entity_id: input_number.zendure_2400_ac_max_oplaadvermogen
+    - action: logbook.log
+      data:
+        message: 'Strategie uit: fasestroom is {{ stroom_fase | round(1) }} A (max {{ max_stroom_a }} A) — max. oplaadvermogen verlaagd van {{ huidig_max | int(0) }} naar {{ [fase_grens, huidig_max] | min | int(0) }} watt'
+        name: Zendure Strategie vermogen
+  - alias: 'Strategie uit, verlaagd: bijstellen, of terug naar de onthouden waarde als er weer ruimte is'
+    conditions:
+    - condition: trigger
+      id: interval
+    - condition: template
+      value_template: '{{ not actief and fase_meetbaar and vrij_w > 0 and is_number(states(''input_number.zendure_2400_ac_max_oplaadvermogen'')) }}'
+    sequence:
+    - if:
+      - condition: template
+        value_template: '{{ fase_grens >= vrij_w | int(0) }}'
+      then:
+      - action: input_number.set_value
+        data:
+          value: '{{ vrij_w | int(0) }}'
+        target:
+          entity_id: input_number.zendure_2400_ac_max_oplaadvermogen
+      - action: input_number.set_value
+        data:
+          value: 0
+        target:
+          entity_id: input_number.strategie_fase_vrij_vermogen
+      - action: logbook.log
+        data:
+          message: 'Strategie uit: weer ruimte op de fase — max. oplaadvermogen terug naar {{ vrij_w | int(0) }} watt'
+          name: Zendure Strategie vermogen
+      else:
+      - if:
+        - condition: template
+          value_template: '{{ fase_grens != huidig_max | int(0) }}'
+        then:
+        - action: input_number.set_value
+          data:
+            value: '{{ fase_grens }}'
+          target:
+            entity_id: input_number.zendure_2400_ac_max_oplaadvermogen
+- alias: 'Strategie aan: max. ontlaadvermogen op reeksvermogen tijdens een ontlaadreeks, anders het plafond'
+  if:
+  - condition: template
+    value_template: '{{ actief and instellingen_ok and is_number(states(''input_number.zendure_2400_ac_max_ontlaadvermogen'')) and huidig_ontlaad | int(0) != doel_ontlaad }}'
+  then:
+  - action: input_number.set_value
+    data:
+      value: '{{ doel_ontlaad }}'
+    target:
+      entity_id: input_number.zendure_2400_ac_max_ontlaadvermogen
+  - action: logbook.log
+    data:
+      message: Max. ontlaadvermogen op {{ doel_ontlaad }} W gezet ({{ 'reeks snel ontladen' if is_state('sensor.strategie_reeks', 'Ontladen') else 'normaal plafond' }})
+      name: Zendure Strategie vermogen
+max: 10
+max_exceeded: silent
+mode: queued

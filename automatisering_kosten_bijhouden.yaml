@@ -1,0 +1,53 @@
+# Zendure Strategie - werkelijke kosten bijhouden
+# Optioneel: telt de werkelijke kosten op voor het blok Werkelijk op het dashboard. Gebruikt de kwartiermeting van Verbruik meten en bijleren.
+# Toevoegen: Instellingen > Automatiseringen > Automatisering maken > Nieuwe
+# automatisering > ⋮ > Bewerken in YAML, alles vervangen door dit bestand en opslaan.
+alias: Zendure Strategie - werkelijke kosten bijhouden
+description: Batterijstrategie versie 2026-11-16.1. Optioneel. Telt bij elke nieuwe kwartiermeting (input_text.strategie_kwartiermeting, van de automatisering Verbruik meten en bijleren) de werkelijke energiestromen op en waardeert ze tegen de prijs van dat kwartier. Resultaat staat in input_text.strategie_werkelijk_vandaag en wordt op het tabblad Kosten van het dashboard getoond (blok Werkelijk). Wijzigt niets aan de batterij. Bij de dagwissel wordt de eindstand van de vorige dag bewaard in input_text.strategie_werkelijk_dag_1 (gisteren) tot en met dag_4. Accumulatoren 13 en 14 zijn de directe teruglevering van de zonnepanelen (kWh en opbrengst). Laden uit het net is nooit meer dan de P1-import van dat kwartier. Prijzen per kwartier (import en export, incl. opslag, belasting, btw, exportvergoeding en zonbonus) komen uit sensor.strategie_prijzen; is die niet beschikbaar, dan telt dat kwartier niet mee. Telt een kwartier niet mee (geen verschillen in de meting of geen prijzen), dan begint na de dagwissel toch een nieuwe lege dag, zodat de dag niet nog eens wordt doorgeschoven.
+triggers:
+- trigger: state
+  entity_id: input_text.strategie_kwartiermeting
+actions:
+- alias: 'Dagwissel: eindstand van gisteren bewaren en oudere dagen doorschuiven'
+  if:
+  - condition: template
+    value_template: '{% set p = states(''input_text.strategie_werkelijk_vandaag'').split('';'') %}{{ (p | length) == 3 and p[0] != ((now().timestamp() - 450) | timestamp_custom(''%Y-%m-%d'')) }}'
+  then:
+  - action: input_text.set_value
+    data:
+      value: '{{ states(''input_text.strategie_werkelijk_dag_3'') }}'
+    target:
+      entity_id: input_text.strategie_werkelijk_dag_4
+  - action: input_text.set_value
+    data:
+      value: '{{ states(''input_text.strategie_werkelijk_dag_2'') }}'
+    target:
+      entity_id: input_text.strategie_werkelijk_dag_3
+  - action: input_text.set_value
+    data:
+      value: '{{ states(''input_text.strategie_werkelijk_dag_1'') }}'
+    target:
+      entity_id: input_text.strategie_werkelijk_dag_2
+  - action: input_text.set_value
+    data:
+      value: '{% set p = states(''input_text.strategie_werkelijk_vandaag'').split('';'') %}{{ p[0] ~ '';'' ~ p[2] }}'
+    target:
+      entity_id: input_text.strategie_werkelijk_dag_1
+- alias: Kwartiermeting lezen
+  variables:
+    oud: '{{ states(''input_text.strategie_werkelijk_vandaag'') }}'
+    m: '{{ states(''input_text.strategie_kwartiermeting'').split('';'') }}'
+- variables:
+    ok: '{{ (m | length) == 5 and (m[2].split('','') | length) == 5 and is_number(m[0]) }}'
+- variables:
+    mts: '{{ m[0] | float(0) if ok else 0 }}'
+    d: '{{ (m[2].split('','') | map(''float'', 0) | list) if ok else [0, 0, 0, 0, 0] }}'
+    zon: '{{ m[3] | float(0) if ok else 0 }}'
+    huis: '{{ m[4] | float(0) if ok else 0 }}'
+- action: input_text.set_value
+  target:
+    entity_id: input_text.strategie_werkelijk_vandaag
+  data:
+    value: '{% set ts = mts - 450 %}{% set dag = ts | timestamp_custom(''%Y-%m-%d'') %}{% set parts = oud.split('';'') %}{% if not ok or not has_value(''sensor.strategie_prijzen'') %}{% set nd = (now().timestamp() - 450) | timestamp_custom(''%Y-%m-%d'') %}{{ oud if ((parts | length) == 3 and parts[0] == nd) else nd ~ '';;0,0,0,0,0,0,0,0,0,0,0,0,0,0'' }}{% else %}{% set acc = (parts[2].split('','') | map(''float'', 0) | list) if (parts | length) == 3 else [] %}{% if (parts | length) != 3 or parts[0] != dag or (acc | length) != 14 %}{% set acc = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0] %}{% endif %}{% set pz = ''sensor.strategie_prijzen'' %}{% set pi = state_attr(pz, ''import'') %}{% set pe = state_attr(pz, ''export'') %}{% set ix = ((ts - state_attr(pz, ''start'')) // state_attr(pz, ''interval_s'')) | int %}{% set p = pi[ix] if (ix >= 0 and ix < (pi | length)) else state_attr(pz, ''import_nu'') | float %}{% set kx = pe[ix] if (ix >= 0 and ix < (pe | length)) else states(pz) | float %}{% set s = zon %}{% set bd = d[1] %}{% set bc = d[2] %}{% set gi = d[3] %}{% set ge = d[4] %}{% set L = huis %}{% set direct = [s, L] | min %}{% set sur = s - direct %}{% set sb = [bc, sur] | min %}{% set gb = [bc - sb, gi] | min %}{% set sb = bc - gb %}{% set xd = [[bd, ge - (sur - sb)] | min, 0] | max %}{% set ud = bd - xd %}{% set hg = [gi - gb, 0] | max %}{% set zd = [ge - xd, 0] | max %}{% set v = acc %}{% set nv = [v[0] + gb, v[1] + gb * p, v[2] + sb, v[3] + sb * kx, v[4] + ud, v[5] + ud * p, v[6] + xd, v[7] + xd * kx, v[8] + gi * p - ge * kx, v[9] + ([L - s, 0] | max) * p - ([s - L, 0] | max) * kx, v[10] + hg, v[11] + hg * p, v[12] + zd, v[13] + zd * kx] %}{{ dag ~ '';;'' ~ (nv | map(''round'', 4) | join('','')) }}{% endif %}'
+mode: queued
+max: 3

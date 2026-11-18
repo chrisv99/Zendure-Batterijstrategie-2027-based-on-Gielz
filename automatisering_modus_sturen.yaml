@@ -1,0 +1,132 @@
+# Zendure Strategie - modus sturen
+# Nodig: stuurt de Gielz-modus volgens het plan zolang Strategie Actief aan staat.
+# Toevoegen: Instellingen > Automatiseringen > Automatisering maken > Nieuwe
+# automatisering > ⋮ > Bewerken in YAML, alles vervangen door dit bestand en opslaan.
+alias: Zendure Strategie - modus sturen
+description: 'Batterijstrategie versie 2026-11-14.4. Zet de Zendure 2400 AC Modus Selecteren op de modus uit sensor.strategie_gewenste_modus, alleen als input_boolean.strategie_actief aan staat. Bij uitzetten van de schakelaar gaat de batterij terug naar Nul op de meter. Hij verandert niets aan het max. oplaad- en ontlaadvermogen van Gielz; dat doet alleen de automatisering vermogen uit de aanvulling reeks en fasebeperking (batterijstrategie_reeks.yaml), als die is toegevoegd. Terugval: staat de strategie aan en is sensor.strategie_gewenste_modus 5 minuten onbekend of niet beschikbaar (plan weggevallen), dan gaat de batterij terug naar Nul op de meter. Zodra het plan terug is volgt hij het weer. Bewaking op versheid: is sensor.strategie_prijzen of sensor.strategie_gewenste_modus al 16 minuten of langer niet opnieuw berekend (bijvoorbeeld door een rekenfout, of doordat het rekenblok blijft wachten op de invoer, waardoor het plan blijft stilstaan; beide worden elk kwartier opnieuw geschreven), dan volgt hij het plan niet meer en gaat de batterij naar Nul op de meter, totdat beide weer bijgewerkt worden.'
+triggers:
+- entity_id: sensor.strategie_gewenste_modus
+  id: plan
+  trigger: state
+- entity_id: input_boolean.strategie_actief
+  id: schakelaar
+  trigger: state
+- id: periodiek
+  minutes: /5
+  trigger: time_pattern
+- event: start
+  id: start
+  trigger: homeassistant
+actions:
+- choose:
+  - alias: 'Strategie aan: modus volgt het plan'
+    conditions:
+    - condition: state
+      entity_id: input_boolean.strategie_actief
+      state: 'on'
+    - alias: Prijzen en plan zijn vers (allebei minder dan 16 minuten geleden berekend)
+      condition: template
+      value_template: '{{ states.sensor.strategie_prijzen is not none and states.sensor.strategie_gewenste_modus is not none and (now() - states.sensor.strategie_prijzen.last_reported).total_seconds() < 960 and (now() - states.sensor.strategie_gewenste_modus.last_reported).total_seconds() < 960 }}'
+    - condition: state
+      entity_id: sensor.strategie_gewenste_modus
+      state:
+      - Nul op de meter
+      - Snel opladen
+      - Snel ontladen
+      - Alleen slim opladen
+      - Alleen slim ontladen
+    - condition: template
+      value_template: '{{ states(''input_select.zendure_2400_ac_modus_selecteren'') != states(''sensor.strategie_gewenste_modus'') }}'
+    sequence:
+    - action: input_select.select_option
+      data:
+        option: '{{ states(''sensor.strategie_gewenste_modus'') }}'
+      target:
+        entity_id: input_select.zendure_2400_ac_modus_selecteren
+  - alias: 'Prijzen of plan niet vers: terug naar Nul op de meter'
+    conditions:
+    - condition: state
+      entity_id: input_boolean.strategie_actief
+      state: 'on'
+    - alias: sensor.strategie_prijzen of sensor.strategie_gewenste_modus is 16 minuten of langer niet berekend
+      condition: template
+      value_template: '{{ states.sensor.strategie_prijzen is none or states.sensor.strategie_gewenste_modus is none or (now() - states.sensor.strategie_prijzen.last_reported).total_seconds() >= 960 or (now() - states.sensor.strategie_gewenste_modus.last_reported).total_seconds() >= 960 }}'
+    - condition: state
+      entity_id: input_select.zendure_2400_ac_modus_selecteren
+      state:
+      - Snel opladen
+      - Snel ontladen
+      - Alleen slim opladen
+      - Alleen slim ontladen
+    sequence:
+    - action: input_select.select_option
+      data:
+        option: Nul op de meter
+      target:
+        entity_id: input_select.zendure_2400_ac_modus_selecteren
+    - action: logbook.log
+      data:
+        name: Zendure Strategie
+        message: '{{ ''Prijzen'' if (states.sensor.strategie_prijzen is none or (now() - states.sensor.strategie_prijzen.last_reported).total_seconds() >= 960) else ''Plan (gewenste modus)'' }} al 16 minuten niet bijgewerkt: batterij teruggezet naar Nul op de meter'
+  - alias: 'Plan weggevallen: na 5 minuten terug naar Nul op de meter'
+    conditions:
+    - condition: state
+      entity_id: input_boolean.strategie_actief
+      state: 'on'
+    - alias: Gewenste modus is al 5 minuten onbekend of niet beschikbaar
+      condition: or
+      conditions:
+      - condition: state
+        entity_id: sensor.strategie_gewenste_modus
+        state: onbekend
+        for:
+          minutes: 5
+      - condition: state
+        entity_id: sensor.strategie_gewenste_modus
+        state: unavailable
+        for:
+          minutes: 5
+      - condition: state
+        entity_id: sensor.strategie_gewenste_modus
+        state: unknown
+        for:
+          minutes: 5
+    - condition: state
+      entity_id: input_select.zendure_2400_ac_modus_selecteren
+      state:
+      - Snel opladen
+      - Snel ontladen
+      - Alleen slim opladen
+      - Alleen slim ontladen
+    sequence:
+    - action: input_select.select_option
+      data:
+        option: Nul op de meter
+      target:
+        entity_id: input_select.zendure_2400_ac_modus_selecteren
+    - action: logbook.log
+      data:
+        name: Zendure Strategie
+        message: 'Plan al 5 minuten niet beschikbaar: batterij teruggezet naar Nul op de meter'
+  - alias: 'Strategie uitgezet: terug naar Nul op de meter'
+    conditions:
+    - condition: trigger
+      id: schakelaar
+    - condition: state
+      entity_id: input_boolean.strategie_actief
+      state: 'off'
+    - condition: state
+      entity_id: input_select.zendure_2400_ac_modus_selecteren
+      state:
+      - Snel opladen
+      - Snel ontladen
+      - Alleen slim opladen
+      - Alleen slim ontladen
+    sequence:
+    - action: input_select.select_option
+      data:
+        option: Nul op de meter
+      target:
+        entity_id: input_select.zendure_2400_ac_modus_selecteren
+max: 5
+mode: queued

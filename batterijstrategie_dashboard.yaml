@@ -1,0 +1,585 @@
+# Batterijstrategie – dashboard
+# Installeren: Instellingen > Dashboards > Dashboard toevoegen > "Nieuw dashboard
+# vanaf nul". Open het dashboard, kies rechtsboven ⋮ > Bewerken > ⋮ > "Ruwe
+# configuratie-editor", vervang alles door de inhoud van dit bestand en sla op.
+# Nodig: apexcharts-card (HACS) voor de grafiek, batterijstrategie.yaml in
+# /config/packages en de automatiseringen (automatisering_*.yaml). Vul daarna
+# eerst het tabblad Instellingen in; de kaart "Controle" bovenaan laat zien
+# wat nog ontbreekt.
+views:
+- icon: mdi:calendar-clock
+  max_columns: 3
+  path: planning
+  sections:
+  - cards:
+    - heading: Status
+      icon: mdi:battery-sync
+      type: heading
+    - entity: input_boolean.strategie_actief
+      grid_options:
+        columns: 6
+      name: Strategie actief
+      tap_action:
+        action: toggle
+      type: tile
+    - entity: sensor.zendure_2400_ac_laadpercentage
+      grid_options:
+        columns: 6
+      name: Batterij
+      type: tile
+    - entity: sensor.strategie_gewenste_modus
+      grid_options:
+        columns: 6
+      icon: mdi:calendar-clock
+      name: Gewenste modus nu
+      type: tile
+    - entity: input_select.zendure_2400_ac_modus_selecteren
+      grid_options:
+        columns: 6
+      name: Huidige modus batterij
+      type: tile
+    - entity: input_number.zendure_2400_ac_max_oplaadvermogen
+      grid_options:
+        columns: 6
+      icon: mdi:battery-arrow-down
+      name: Max. laden
+      type: tile
+    - entity: input_number.zendure_2400_ac_max_ontlaadvermogen
+      grid_options:
+        columns: 6
+      icon: mdi:battery-arrow-up
+      name: Max. ontladen
+      type: tile
+    - entity: sensor.strategie_importprijs_nu
+      grid_options:
+        columns: 6
+      name: Importprijs nu (incl. alles)
+      type: tile
+    - entity: sensor.strategie_exportprijs_nu
+      grid_options:
+        columns: 6
+      icon: mdi:transmission-tower-export
+      name: Exportprijs nu (incl. exportvergoeding en zonbonus)
+      type: tile
+    - type: tile
+      entity: sensor.strategie_reeks
+      name: Reeks nu (laden/ontladen met reeksvermogen)
+      icon: mdi:battery-sync-outline
+      grid_options:
+        columns: 6
+      visibility:
+      - condition: template
+        value_template: '{{ states.input_number.strategie_vermogen_bij_reeks is not none }}'
+    - type: markdown
+      content: '{% set iv = ''sensor.strategie_invoer'' %}{% set z = state_attr(iv, ''zon'') or [] %}{% set t0 = state_attr(iv, ''start'') %}{% set s = state_attr(iv, ''interval_s'') %}{% set nu = now().timestamp() %}{% set vd = now().strftime(''%Y-%m-%d'') %}{% set ns = namespace(r=0, m=0, mk=false) %}{% if z and is_number(t0) and is_number(s) %}{% for v in z %}{% set ts = t0 + loop.index0 * s %}{% set d = ts | timestamp_custom(''%Y-%m-%d'') %}{% if d == vd and ts + s > nu %}{% set ns.r = ns.r + v %}{% elif d > vd %}{% set ns.m = ns.m + v %}{% set ns.mk = true %}{% endif %}{% endfor %}☀️ Zon verwacht · rest van vandaag **{{ (''%.1f'' | format(ns.r)) | replace(''.'', '','') }} kWh** · morgen **{{ ((''%.1f'' | format(ns.m)) | replace(''.'', '','') ~ '' kWh'') if ns.mk else ''nog niet bekend'' }}**{% else %}☀️ Zonverwachting niet beschikbaar{% endif %}'
+      grid_options:
+        columns: 12
+    column_span: 3
+    type: grid
+  - cards:
+    - heading: Prijs en plan vandaag en morgen
+      icon: mdi:chart-bar
+      type: heading
+    - apex_config:
+        chart:
+          height: 340
+          stacked: false
+        legend:
+          show: true
+          showForZeroSeries: false
+        tooltip:
+          custom: 'EVAL:function({series, dataPointIndex, w}) { const xs = w.globals.seriesX[0] || []; const t = xs[dataPointIndex]; const kop = t ? new Date(t).toLocaleString(''nl-NL'', {weekday: ''short'', day: ''numeric'', month: ''short'', hour: ''2-digit'', minute: ''2-digit''}) : ''''; let rows = ''''; for (let i = 0; i < series.length; i++) { const v = series[i][dataPointIndex]; if (v === null || v === undefined || isNaN(v)) { continue; } const naam = w.globals.seriesNames[i]; const kleur = w.globals.colors[i]; const txt = naam.indexOf(''batterijstand'') >= 0 ? Math.round(v) + '' %'' : naam.indexOf(''(W)'') >= 0 ? Math.round(v) + '' W'' : ''€ '' + Number(v).toFixed(3).replace(''.'', '','') + ''/kWh''; rows += ''<div style="display:flex;align-items:center;gap:8px;padding:3px 0"><span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:'' + kleur + ''"></span><span>'' + naam + '': <b>'' + txt + ''</b></span></div>''; } return ''<div style="padding:8px 12px;font-size:13px"><div style="font-weight:600;margin-bottom:6px">'' + kop + ''</div>'' + rows + ''</div>''; }'
+          hideEmptySeries: true
+          intersect: false
+          shared: true
+      graph_span: 48h
+      grid_options:
+        columns: full
+        rows: 8
+      header:
+        show: false
+      now:
+        label: Nu
+        show: true
+      series:
+      - color: '#1e88e5'
+        curve: straight
+        data_generator: const a=entity.attributes;const plan=(hass.states['sensor.strategie_plan']||{}).state||'';const imp=((hass.states['sensor.strategie_prijzen']||{}).attributes||{}).import||[];const t0=a.start*1000,iv=a.interval_s*1000;const out=[];imp.forEach((p,i)=>{const s=t0+i*iv,en=s+iv-1;const v=plan[i]==='C'?p:null;out.push([s,v]);out.push([en,v]);});return out;
+        entity: sensor.strategie_simulatie
+        extend_to: false
+        float_precision: 3
+        name: Laden van het net
+        opacity: 0.85
+        show:
+          in_header: false
+          legend_value: false
+        stroke_width: 1
+        type: area
+        yaxis_id: prijs
+      - color: '#fb8c00'
+        curve: straight
+        data_generator: const a=entity.attributes;const plan=(hass.states['sensor.strategie_plan']||{}).state||'';const imp=((hass.states['sensor.strategie_prijzen']||{}).attributes||{}).import||[];const t0=a.start*1000,iv=a.interval_s*1000;const out=[];imp.forEach((p,i)=>{const s=t0+i*iv,en=s+iv-1;const v=plan[i]==='H'?p:null;out.push([s,v]);out.push([en,v]);});return out;
+        entity: sensor.strategie_simulatie
+        extend_to: false
+        float_precision: 3
+        name: Alleen laden
+        opacity: 0.85
+        show:
+          in_header: false
+          legend_value: false
+        stroke_width: 1
+        type: area
+        yaxis_id: prijs
+      - color: '#8d6e63'
+        curve: straight
+        data_generator: const a=entity.attributes;const plan=(hass.states['sensor.strategie_plan']||{}).state||'';const imp=((hass.states['sensor.strategie_prijzen']||{}).attributes||{}).import||[];const t0=a.start*1000,iv=a.interval_s*1000;const out=[];imp.forEach((p,i)=>{const s=t0+i*iv,en=s+iv-1;const v=plan[i]==='O'?p:null;out.push([s,v]);out.push([en,v]);});return out;
+        entity: sensor.strategie_simulatie
+        extend_to: false
+        float_precision: 3
+        name: Alleen ontladen
+        opacity: 0.85
+        show:
+          in_header: false
+          legend_value: false
+        stroke_width: 1
+        type: area
+        yaxis_id: prijs
+      - color: '#43a047'
+        curve: straight
+        data_generator: const a=entity.attributes;const plan=(hass.states['sensor.strategie_plan']||{}).state||'';const imp=((hass.states['sensor.strategie_prijzen']||{}).attributes||{}).import||[];const t0=a.start*1000,iv=a.interval_s*1000;const out=[];imp.forEach((p,i)=>{const s=t0+i*iv,en=s+iv-1;const v=plan[i]==='N'?p:null;out.push([s,v]);out.push([en,v]);});return out;
+        entity: sensor.strategie_simulatie
+        extend_to: false
+        float_precision: 3
+        name: Nul op de meter
+        opacity: 0.85
+        show:
+          in_header: false
+          legend_value: false
+        stroke_width: 1
+        type: area
+        yaxis_id: prijs
+      - color: '#e53935'
+        curve: straight
+        data_generator: const a=entity.attributes;const plan=(hass.states['sensor.strategie_plan']||{}).state||'';const imp=((hass.states['sensor.strategie_prijzen']||{}).attributes||{}).import||[];const t0=a.start*1000,iv=a.interval_s*1000;const out=[];imp.forEach((p,i)=>{const s=t0+i*iv,en=s+iv-1;const v=plan[i]==='X'?p:null;out.push([s,v]);out.push([en,v]);});return out;
+        entity: sensor.strategie_simulatie
+        extend_to: false
+        float_precision: 3
+        name: Terugleveren aan het net
+        opacity: 0.85
+        show:
+          in_header: false
+          legend_value: false
+        stroke_width: 1
+        type: area
+        yaxis_id: prijs
+      - color: '#ab47bc'
+        curve: straight
+        data_generator: let socNu=null;try{const q=parseFloat(hass.states['sensor.zendure_2400_ac_laadpercentage'].state);if(!isNaN(q)){socNu=Math.round(q);}}catch(x){}const a=entity.attributes;const sl=a.soc||[];const st0=a.start*1000,iv=a.interval_s*1000;const r=(v)=>(v===null||v===undefined||isNaN(v))?null:Math.round(v);const out=[];sl.forEach((e,i)=>{const t0=st0+i*iv,t1=t0+iv-1;const v1=r(e);let v0=null;if(v1!==null){const vp=i>0?r(sl[i-1]):null;v0=vp!==null?vp:socNu;}out.push([t0,v0]);out.push([t1,v1]);});return out;
+        entity: sensor.strategie_simulatie
+        extend_to: false
+        float_precision: 0
+        name: Verwachte batterijstand (%)
+        show:
+          in_header: false
+          legend_value: false
+        stroke_width: 3
+        type: line
+        unit: '%'
+        yaxis_id: soc
+      - color: '#ffd54f'
+        curve: stepline
+        data_generator: const a=entity.attributes;const ex=a.export||[];const t0=a.start*1000,iv=a.interval_s*1000;const out=[];ex.forEach((v,i)=>{const s=t0+i*iv;out.push([s,v]);out.push([s+iv-1,v]);});return out;
+        entity: sensor.strategie_prijzen
+        extend_to: false
+        float_precision: 3
+        name: Exportprijs (incl. exportvergoeding en zonbonus)
+        opacity: 0
+        show:
+          in_header: false
+          legend_value: false
+        stroke_width: 0
+        type: line
+        yaxis_id: prijs
+      - name: Verwacht verbruik (W)
+        entity: sensor.strategie_invoer
+        type: line
+        curve: straight
+        color: '#ec407a'
+        stroke_width: 2
+        stroke_dash: 4
+        extend_to: false
+        float_precision: 0
+        unit: W
+        yaxis_id: verbruik
+        show:
+          in_header: false
+          legend_value: false
+        data_generator: const a=entity.attributes;const vb=a.verbruik||[];const st0=a.start*1000,iv=a.interval_s*1000;const out=[];vb.forEach((e,i)=>{const s=st0+i*iv,en=s+iv-1;const v=Math.round(e*3600000000/iv);out.push([s,v]);out.push([en,v]);});return out;
+      - name: Verwachte zonne-opbrengst (W)
+        entity: sensor.strategie_invoer
+        type: line
+        curve: straight
+        color: '#fbc02d'
+        stroke_width: 2
+        extend_to: false
+        float_precision: 0
+        unit: W
+        yaxis_id: verbruik
+        show:
+          in_header: false
+          legend_value: false
+        data_generator: const a=entity.attributes;const zn=a.zon||[];if(!zn.some(v=>v>0))return [];const st0=a.start*1000,iv=a.interval_s*1000;const out=[];zn.forEach((e,i)=>{const s=st0+i*iv,en=s+iv-1;const v=Math.round(e*3600000000/iv);out.push([s,v]);out.push([en,v]);});return out;
+      span:
+        start: day
+      type: custom:apexcharts-card
+      yaxis:
+      - apex_config:
+          title:
+            text: Importprijs (€/kWh)
+        decimals: 2
+        id: prijs
+        min: ~0
+      - apex_config:
+          title:
+            text: Verwachte batterij (%)
+        decimals: 0
+        id: soc
+        max: 100
+        min: 0
+        opposite: true
+      - id: verbruik
+        min: 0
+        decimals: 0
+        opposite: true
+        apex_config:
+          title:
+            text: Verwacht verbruik en zon (W)
+    - heading: Planning in tijden
+      icon: mdi:format-list-bulleted
+      type: heading
+    - content: |-
+        {% set pz = 'sensor.strategie_prijzen' %}
+        {% set t0p = state_attr(pz, 'start') %}{% set ivp = state_attr(pz, 'interval_s') %}
+        {% set sb = namespace(s=[]) %}{% for i in range((state_attr(pz, 'import') or []) | length) %}{% set sb.s = sb.s + [{'start': t0p + i * ivp, 'end': t0p + (i + 1) * ivp}] %}{% endfor %}{% set slots = sb.s %}
+        {% set sm = 'sensor.strategie_simulatie' %}
+        {% set plan = states('sensor.strategie_plan') %}
+        {% set rk = state_attr(sm, 'reeks') or [] %}
+        {% set lnet = state_attr(sm, 'laden_net') or [] %}
+        {% set sp = state_attr('sensor.strategie_simulatie', 'soc') or [] %}
+        {% set ok = (sp | length) == (plan | length) %}
+        {% set mr = states.input_number.strategie_vermogen_bij_reeks is not none %}
+        {% set pin = states('input_number.strategie_laadvermogen_planning' if mr else 'input_number.zendure_2400_ac_max_oplaadvermogen') | float %}
+        {% set pout = states('input_number.strategie_ontlaadvermogen_planning' if mr else 'input_number.zendure_2400_ac_max_ontlaadvermogen') | float %}
+        {% set prk = (states('input_number.strategie_vermogen_bij_reeks') | float) if mr else pin %}
+        {% set soc_nu = states('sensor.zendure_2400_ac_laadpercentage') | float | round(0) | int %}
+        {% set nowts = now().timestamp() %}
+        {% set vandaag = now().strftime('%Y-%m-%d') %}
+        {% set dn = ['ma', 'di', 'wo', 'do', 'vr', 'za', 'zo'] %}
+        {% set info = {'C': ['🔵', 'Laden van het net', 'Snel opladen'], 'H': ['🟠', 'Alleen laden', 'Alleen slim opladen'], 'X': ['🔴', 'Terugleveren aan het net', 'Snel ontladen'], 'O': ['🟤', 'Alleen ontladen', 'Alleen slim ontladen'], 'N': ['🟢', 'Nul op de meter', 'Nul op de meter']} %}
+        {% macro duur(s) %}{% set m = (s / 60) | round(0) | int %}{% set h = m // 60 %}{% set r = m % 60 %}{{ ((h ~ ' u') if h > 0 else '') ~ (' ' if h > 0 and r > 0 else '') ~ ((r ~ ' min') if r > 0 else '') }}{% endmacro %}
+        {% macro bar(p) %}{% set f = ((p | float(0)) / 10) | round(0) | int %}{{ '▰' * f ~ '▱' * (10 - f) }}{% endmacro %}
+        {% set ns = namespace(cur='.', start=0, blocks=[]) %}
+        {% if (slots | length) >= 2 and (plan | length) == (slots | length) %}{% for ch in plan + '.' %}{% set i = loop.index0 %}{% if ch != ns.cur %}{% if ns.cur in info %}{% set a = slots[ns.start].start %}{% set b = slots[i - 1].end %}{% if b > nowts %}{% set uren = (b - a) / 3600 %}{% set inr = rk[ns.start] if ns.start < (rk | length) else false %}{% set pinx = ([pin, prk] | min) if inr else pin %}{% set poutx = ([pout, prk] | min) if inr else pout %}{% if ns.cur == 'C' %}{% set det = (pinx | int) ~ ' W · ca. ' ~ (('%.1f' | format(lnet[ns.start:i] | sum)) | replace('.', ',')) ~ ' kWh uit het net' %}{% elif ns.cur == 'H' %}{% set det = 'alleen laden met zonne-overschot, niet ontladen' %}{% elif ns.cur == 'O' %}{% set det = 'batterij dekt alleen tekort, zonne-overschot gaat naar het net' %}{% elif ns.cur == 'X' %}{% set det = 'max. ' ~ (poutx | int) ~ ' W naar het net' %}{% else %}{% set det = 'batterij volgt verbruik en zonne-overschot' %}{% endif %}{% set p0 = none %}{% set p1 = none %}{% if ok %}{% set v0 = sp[ns.start - 1] if ns.start > 0 else none %}{% set v1 = sp[i - 1] %}{% set p0 = (v0 | round(0) | int) if v0 is not none else soc_nu %}{% set p1 = (v1 | round(0) | int) if v1 is not none else none %}{% endif %}{% set ns.blocks = ns.blocks + [{'m': ns.cur, 'a': a, 'b': b, 'det': det, 'p0': p0, 'p1': p1}] %}{% endif %}{% endif %}{% set ns.cur = ch %}{% set ns.start = i %}{% endif %}{% endfor %}{% endif %}
+        {% set q = namespace(nu=none, na=none) %}{% for blk in ns.blocks %}{% if q.nu is none and blk.a <= nowts and nowts < blk.b %}{% set q.nu = blk %}{% elif q.nu is not none and q.na is none %}{% set q.na = blk %}{% endif %}{% endfor %}
+        {% if q.nu %}{% set x = info[q.nu.m] %}<ha-alert alert-type="info" title="Nu: {{ x[0] }} {{ x[1] }}">Tot {{ q.nu.b | timestamp_custom('%H:%M') }} · modus {{ x[2] }} · batterij nu {{ soc_nu }}%{% if q.nu.p1 is not none %}, verwacht {{ q.nu.p1 }}% om {{ q.nu.b | timestamp_custom('%H:%M') }}{% endif %}.{% if q.na %} Daarna: {{ info[q.na.m][0] }} {{ info[q.na.m][1] | lower }} ({{ q.na.a | timestamp_custom('%H:%M') }} – {{ q.na.b | timestamp_custom('%H:%M') }}).{% endif %}</ha-alert>{% else %}Batterij nu: **{{ soc_nu }}%**{% endif %}
+
+        {% if not ns.blocks %}Geen planning beschikbaar.{% endif %}
+        {% for dag in ns.blocks | map(attribute='a') | map('timestamp_custom', '%Y-%m-%d') | unique | list %}{% set dt = strptime(dag, '%Y-%m-%d') %}
+        #### {{ 'Vandaag' if dag == vandaag else 'Morgen' }} · {{ dn[dt.weekday()] }} {{ dt.strftime('%d-%m') }}
+
+        | | Tijd | Wat doet de batterij | Batterij |
+        |:-:|:--|:--|:--|
+        {% for blk in ns.blocks if (blk.a | timestamp_custom('%Y-%m-%d')) == dag %}{% set x = info[blk.m] %}{% set isnu = q.nu is not none and blk.a == q.nu.a %}| {{ x[0] }} | {{ '**▶ nu** ' if isnu else '' }}**{{ blk.a | timestamp_custom('%H:%M') }} – {{ blk.b | timestamp_custom('%H:%M') }}**<br>{{ duur(blk.b - blk.a) }} | **{{ x[1] }}**<br>{{ blk.det }}{{ (' · *modus ' ~ x[2] ~ '*') if x[2] != x[1] else '' }} | {% if blk.p1 is not none %}{{ blk.p0 }}% → **{{ blk.p1 }}%**<br>{{ bar(blk.p1) }}{% else %}–{% endif %} |
+        {% endfor %}
+        {% endfor %}
+
+        🔵 laden van het net · 🟠 alleen laden · 🔴 terugleveren · 🟤 alleen ontladen · 🟢 nul op de meter. De verwachte batterijstand is een schatting op basis van de zonvoorspelling en het verbruiksprofiel.
+      grid_options:
+        columns: full
+      type: markdown
+    column_span: 3
+    type: grid
+  title: Planning
+  type: sections
+- icon: mdi:cash-multiple
+  max_columns: 2
+  path: kosten
+  sections:
+  - cards:
+    - heading: 'Verwacht: rest van vandaag en morgen'
+      icon: mdi:crystal-ball
+      type: heading
+    - content: |-
+        {% macro eur(x) %}{% set v = x if (x | abs) >= 0.005 else 0 %}{{ ('−' if v < 0 else '') ~ '€ ' ~ ('%.2f' | format(v | abs)) | replace('.', ',') }}{% endmacro %}
+        {% macro kwh(x) %}{{ '' if x is none else ('%.1f' | format(x)) | replace('.', ',') | replace('-', '−') }}{% endmacro %}
+        {% macro avg(x, k) %}{{ ('€ ' ~ ('%.3f' | format(x / k)) | replace('.', ',')) if k > 0.05 else '–' }}{% endmacro %}
+        {% macro row(lbl, m1, k0, e0, k1, e1, b=false) %}| {{ lbl }} | {{ kwh(k0) }} | {{ ('**' ~ eur(e0) ~ '**') if b else eur(e0) }} | {% if m1 %}{{ kwh(k1) }} | {{ ('**' ~ eur(e1) ~ '**') if b else eur(e1) }}{% else %} | –{% endif %} |{% endmacro %}
+        {% set pz = 'sensor.strategie_prijzen' %}
+        {% set pi = state_attr(pz, 'import') or [] %}
+        {% set pe = state_attr(pz, 'export') or [] %}
+        {% set n = pi | length %}
+        {% set zn = (state_attr('sensor.strategie_invoer', 'zon') or [])[:n] %}
+        {% set vb = (state_attr('sensor.strategie_invoer', 'verbruik') or [])[:n] %}
+        {% set sm = 'sensor.strategie_simulatie' %}
+        {% set ssoc = state_attr(sm, 'soc') or [] %}
+        {% set dp = states('sensor.strategie_plan') %}
+        {% if n < 4 or dp in ['unknown', 'unavailable', 'onbekend', ''] or (dp | length) != n or (zn | length) != n or (vb | length) != n or (ssoc | length) != n or state_attr(sm, 'start') != state_attr(pz, 'start') %}Geen planning beschikbaar.{% else %}
+        {% set wear = states('input_number.strategie_slijtagekosten') | float %}
+        {% set eta_o = states('input_number.strategie_rendement_ontladen') | float / 100 %}
+        {% set cap = state_attr('sensor.zendure_2400_ac_indicatie_benodigde_energie', 'totale_capaciteit_kwh') | float %}
+        {% set minsoc = states('input_number.zendure_2400_ac_minimaal_toegestaan_laadpercentage') | float %}
+        {% set t0 = state_attr(pz, 'start') %}
+        {% set slot_s = state_attr(pz, 'interval_s') %}
+        {% set s0 = state_attr(sm, 'soc_start') %}
+        {% set lgc = state_attr(sm, 'laden_net') %}{% set lsc = state_attr(sm, 'laden_zon') %}{% set lud = state_attr(sm, 'ontladen_huis') %}{% set lxd = state_attr(sm, 'ontladen_net') %}
+        {% set ns = namespace(res=[]) %}
+        {% for dnr in [0, 1] %}
+        {% set dd = (t0 + dnr * 90000) | timestamp_custom('%Y-%m-%d') %}
+        {% set a = namespace(imp=0, cost=0, ex=0, rev=0, bcost=0, brev=0, cnt=0, gc=0, gcc=0, sc=0, scc=0, ud=0, uds=0, xd=0, xdr=0, hg=0, hgc=0, es=-1, ee=0, ps=0) %}
+        {% for t in range(n) %}
+        {% set ts = t0 + t * slot_s %}
+        {% if dp[t] != '.' and ts + slot_s > now().timestamp() and (ts | timestamp_custom('%Y-%m-%d')) == dd %}
+        {% set k = pe[t] %}
+        {% set p = pi[t] %}
+        {% set Lh = vb[t] %}{% set pvx = zn[t] %}
+        {% set dr = [Lh, pvx] | min %}{% set R = Lh - dr %}{% set sur = pvx - dr %}
+        {% set bgc = lgc[t] %}{% set bsc = lsc[t] %}{% set bud = lud[t] %}{% set bxd = lxd[t] %}
+        {% set imp = R - bud + bgc %}{% set ex = sur - bsc + bxd %}
+        {% set en = ((ssoc[t - 1] if t > 0 and ssoc[t - 1] is not none else s0) - minsoc) / 100 * cap %}
+        {% set a.imp = a.imp + imp %}{% set a.cost = a.cost + imp * p %}{% set a.ex = a.ex + ex %}{% set a.rev = a.rev + ex * k %}
+        {% set a.gc = a.gc + bgc %}{% set a.gcc = a.gcc + bgc * p %}{% set a.sc = a.sc + bsc %}{% set a.scc = a.scc + bsc * k %}{% set a.ud = a.ud + bud %}{% set a.uds = a.uds + bud * p %}{% set a.xd = a.xd + bxd %}{% set a.xdr = a.xdr + bxd * k %}
+        {% set a.bcost = a.bcost + R * p %}{% set a.brev = a.brev + sur * k %}
+        {% set a.hg = a.hg + (imp - bgc) %}{% set a.hgc = a.hgc + (imp - bgc) * p %}
+        {% if a.es < 0 %}{% set a.es = en %}{% endif %}{% set a.ee = (ssoc[t] - minsoc) / 100 * cap %}{% set a.ps = a.ps + p %}
+        {% set a.cnt = a.cnt + 1 %}
+        {% endif %}
+        {% endfor %}
+        {% set ns.res = ns.res + [[a.imp, a.cost, a.ex, a.rev, a.bcost, a.brev, a.cnt, a.gc, a.gcc, a.sc, a.scc, a.ud, a.uds, a.xd, a.xdr, a.hg, a.hgc, a.es, a.ee, a.ps]] %}
+        {% endfor %}
+        {% set r0 = ns.res[0] %}{% set r1 = ns.res[1] %}
+        {% set m1 = r1[6] > 0 %}
+        {% set db0 = (r0[18] - r0[17]) * eta_o if r0[6] > 0 else 0 %}{% set db1 = (r1[18] - r1[17]) * eta_o if r1[6] > 0 else 0 %}
+        {% set dv0 = db0 * (r0[19] / r0[6]) if r0[6] > 0 else 0 %}{% set dv1 = db1 * (r1[19] / r1[6]) if r1[6] > 0 else 0 %}
+        {% set n0 = r0[12] + r0[14] - r0[8] - r0[10] + dv0 %}{% set n1 = r1[12] + r1[14] - r1[8] - r1[10] + dv1 %}
+        {% set k0 = r0[4] - r0[5] - (r0[1] - r0[3]) %}{% set k1 = r1[4] - r1[5] - (r1[1] - r1[3]) %}
+        <ha-alert alert-type="info" title="Verwacht netto resultaat batterij">Rest van vandaag <b>{{ eur(n0) }}</b> · morgen {% if m1 %}<b>{{ eur(n1) }}</b>{% else %}nog niet bekend (prijzen komen meestal in de loop van de middag){% endif %}</ha-alert>
+
+        | | kWh vandaag | € vandaag | kWh morgen | € morgen |
+        |:--|--:|--:|--:|--:|
+        | **Laden** | | | | |
+        {{ row('Uit het net (inkoop)', m1, r0[7], -r0[8], r1[7], -r1[8]) }}
+        {{ row('Met zonne-energie (gemiste teruglevering)', m1, r0[9], -r0[10], r1[9], -r1[10]) }}
+        | **Ontladen** | | | | |
+        {{ row('Zelf verbruikt (bespaarde import)', m1, r0[11], r0[12], r1[11], r1[12]) }}
+        {{ row('Teruggeleverd aan het net', m1, r0[13], r0[14], r1[13], r1[14]) }}
+        {{ row('Verschil batterij-inhoud begin → eind', m1, db0, dv0, db1, dv1) }}
+        {{ row('**Netto resultaat batterij**', m1, none, n0, none, n1, true) }}
+        {{ row('Slijtage (ter info, niet in netto)', m1, none, -wear * (r0[11] + r0[13]), none, -wear * (r1[11] + r1[13])) }}
+        | Gem. prijs laden / waarde ontladen per kWh | | {{ avg(r0[8] + r0[10], r0[7] + r0[9]) }} / {{ avg(r0[12] + r0[14], r0[11] + r0[13]) }} | | {% if m1 %}{{ avg(r1[8] + r1[10], r1[7] + r1[9]) }} / {{ avg(r1[12] + r1[14], r1[11] + r1[13]) }}{% else %}–{% endif %} |
+        | **Overig** | | | | |
+        {{ row('Verbruik uit het net in de woning', m1, r0[15], -r0[16], r1[15], -r1[16]) }}
+        {{ row('Teruglevering direct van de zonnepanelen', m1, r0[2] - r0[13], r0[3] - r0[14], r1[2] - r1[13], r1[3] - r1[14]) }}
+
+        #### Energierekening
+
+        | | Vandaag (rest) | Morgen |
+        |:--|--:|--:|
+        | Met strategie (import − teruglevering) | {{ eur(r0[1] - r0[3]) }} | {{ eur(r1[1] - r1[3]) if m1 else '–' }} |
+        | Zonder batterij | {{ eur(r0[4] - r0[5]) }} | {{ eur(r1[4] - r1[5]) if m1 else '–' }} |
+        | **Verschil door de batterij** | **{{ eur(k0) }}** | {{ ('**' ~ eur(k1) ~ '**') if m1 else '–' }} |
+
+        <details><summary>Hoe wordt dit berekend?</summary>
+
+        Dit is een verwachting op basis van de huidige planning, de zonvoorspelling en het verbruiksprofiel. Bij Vandaag gaat het alleen om de rest van de dag. Negatieve bedragen zijn kosten, positieve bedragen opbrengst.
+
+        Laden uit het net kost de importprijs (inclusief opslag, energiebelasting en btw), laden met zonne-energie kost de teruglevering die je daardoor misloopt, en ontladen levert de importprijs op die je niet hoeft te betalen (of de kale prijs plus de exportvergoeding, en overdag de zonbonus als die aan staat, bij teruglevering). Alle prijzen komen uit sensor.strategie_prijzen. De verliezen bij laden en ontladen zitten erin.
+
+        'Verschil batterij-inhoud' waardeert wat er aan het einde van de dag meer (of minder) in de batterij zit dan aan het begin, tegen de gemiddelde importprijs van die dag. Zo telt energie die je overhoudt voor de nacht of de volgende dag mee, en energie die je aan het begin al had niet als gratis. Het verschil op de energierekening is zonder slijtage en zonder deze waarde. Vastrecht is niet meegerekend.
+
+        </details>{% endif %}
+      grid_options:
+        columns: full
+      type: markdown
+    column_span: 2
+    type: grid
+  - cards:
+    - heading: 'Werkelijk: vandaag en de afgelopen 4 dagen'
+      icon: mdi:cash-check
+      type: heading
+    - content: |-
+        {% if states['automation.zendure_strategie_werkelijke_kosten_bijhouden'] is none %}De werkelijke kosten worden niet bijgehouden. Wil je dit overzicht, voeg dan automatisering_kosten_bijhouden.yaml toe (optioneel).{% else %}{% macro eur(x) %}{% set v = x if (x | abs) >= 0.005 else 0 %}{{ ('−' if v < 0 else '') ~ '€ ' ~ ('%.2f' | format(v | abs)) | replace('.', ',') }}{% endmacro %}
+        {% macro kwh(x) %}{{ ('%.1f' | format(x)) | replace('.', ',') }}{% endmacro %}
+        {% macro avg(x, k) %}{{ ('€ ' ~ ('%.3f' | format(x / k)) | replace('.', ',')) if k > 0.05 else '–' }}{% endmacro %}
+        {% set dn = ['ma', 'di', 'wo', 'do', 'vr', 'za', 'zo'] %}
+        {% set wear = states('input_number.strategie_slijtagekosten') | float %}
+        {% set p0 = states('input_text.strategie_werkelijk_vandaag').split(';') %}
+        {% set ns = namespace(cols=[], heads=[]) %}
+        {% if (p0 | length) == 3 and p0[0] == now().strftime('%Y-%m-%d') %}{% set ns.heads = ['Vandaag'] %}{% set ns.cols = [p0[2].split(',') | map('float', 0) | list] %}{% endif %}
+        {% for i in [1, 2, 3, 4] %}{% set q = states('input_text.strategie_werkelijk_dag_' ~ i).split(';') %}{% if (q | length) == 2 %}{% set dt = strptime(q[0], '%Y-%m-%d', none) %}{% set ns.heads = ns.heads + [(dn[dt.weekday()] ~ ' ' ~ dt.strftime('%d-%m')) if dt else q[0]] %}{% set ns.cols = ns.cols + [q[1].split(',') | map('float', 0) | list] %}{% endif %}{% endfor %}
+        {% if not ns.cols %}Nog geen meetgegevens.{% else %}
+        {% set t = namespace(v=[]) %}{% for k in range(14) %}{% set t.v = t.v + [ns.cols | map(attribute=k) | sum] %}{% endfor %}
+        {% set cols = ns.cols + [t.v] %}{% set heads = ns.heads + ['**Totaal**'] %}
+        {% set nd = ns.cols | length %}
+        {% set netto = t.v[5] + t.v[7] - t.v[1] - t.v[3] %}
+        {% set bespaard = t.v[9] - t.v[8] %}
+        <ha-alert alert-type="{{ 'success' if netto >= 0 else 'warning' }}" title="Netto resultaat batterij: {{ eur(netto) }} over {{ nd }} {{ 'dag' if nd == 1 else 'dagen' }}">Gemiddeld {{ eur(netto / nd) }} per dag. Je energierekening was in deze periode {{ eur(bespaard | abs) }} {{ 'lager' if bespaard >= 0 else 'hoger' }} dan zonder batterij. Energie die nog in de batterij zit, telt hier niet mee.</ha-alert>
+
+        #### In euro
+
+        | | {{ heads | join(' | ') }} |
+        |:--|{{ '--:|' * (cols | length) }}
+        | **Laden** |{{ ' |' * (cols | length) }}
+        | Uit het net (inkoop) |{% for r in cols %} {{ eur(-r[1]) }} |{% endfor %}
+        | Met zonne-energie (gemiste teruglevering) |{% for r in cols %} {{ eur(-r[3]) }} |{% endfor %}
+        | **Ontladen** |{{ ' |' * (cols | length) }}
+        | Zelf verbruikt (bespaarde import) |{% for r in cols %} {{ eur(r[5]) }} |{% endfor %}
+        | Teruggeleverd aan het net |{% for r in cols %} {{ eur(r[7]) }} |{% endfor %}
+        | **Netto resultaat batterij** |{% for r in cols %} **{{ eur(r[5] + r[7] - r[1] - r[3]) }}** |{% endfor %}
+        | Slijtage (ter info, niet in netto) |{% for r in cols %} {{ eur(-wear * (r[4] + r[6])) }} |{% endfor %}
+        | **Energierekening** |{{ ' |' * (cols | length) }}
+        | Met batterij (import − teruglevering) |{% for r in cols %} {{ eur(r[8]) }} |{% endfor %}
+        | Zonder batterij |{% for r in cols %} {{ eur(r[9]) }} |{% endfor %}
+        | **Verschil door de batterij** |{% for r in cols %} **{{ eur(r[9] - r[8]) }}** |{% endfor %}
+        | **Overig** |{{ ' |' * (cols | length) }}
+        | Verbruik uit het net in de woning |{% for r in cols %} {{ eur(-r[11]) }} |{% endfor %}
+        | Teruglevering direct van de zonnepanelen |{% for r in cols %} {{ eur(r[13]) }} |{% endfor %}
+
+        #### In kWh
+
+        | | {{ heads | join(' | ') }} |
+        |:--|{{ '--:|' * (cols | length) }}
+        | Geladen uit het net |{% for r in cols %} {{ kwh(r[0]) }} |{% endfor %}
+        | Geladen met zonne-energie |{% for r in cols %} {{ kwh(r[2]) }} |{% endfor %}
+        | Zelf verbruikt uit de batterij |{% for r in cols %} {{ kwh(r[4]) }} |{% endfor %}
+        | Teruggeleverd uit de batterij |{% for r in cols %} {{ kwh(r[6]) }} |{% endfor %}
+        | Verbruik uit het net in de woning |{% for r in cols %} {{ kwh(r[10]) }} |{% endfor %}
+        | Teruglevering direct van de zonnepanelen |{% for r in cols %} {{ kwh(r[12]) }} |{% endfor %}
+        | Gem. prijs per kWh laden |{% for r in cols %} {{ avg(r[1] + r[3], r[0] + r[2]) }} |{% endfor %}
+        | Gem. waarde per kWh ontladen |{% for r in cols %} {{ avg(r[5] + r[7], r[4] + r[6]) }} |{% endfor %}
+
+        <details><summary>Hoe wordt dit berekend?</summary>
+
+        Elk kwartier bijgewerkt met de P1-meter, de Zendure en de zonne-opbrengstmeter uit het bronnen-blok (als die is ingevuld), en gewaardeerd tegen de prijs van dat kwartier (inkoop inclusief opslag, energiebelasting en btw; teruglevering tegen de kale prijs plus exportvergoeding, met de zonbonus als die aan staat; prijzen uit sensor.strategie_prijzen). Of de lading uit zon of net kwam, en of de ontlading naar huis of naar het net ging, is per kwartier afgeleid uit die meters en dus een benadering. Na middernacht blijft de eindstand van een dag bewaard; de laatste 4 dagen staan naast vandaag. Het netto resultaat telt alleen wat er geladen en ontladen is: zit de batterij aan het einde van een dag voller dan aan het begin, dan komt die waarde pas terug op de dag dat hij ontladen wordt. Slijtage telt niet mee in het netto resultaat; vastrecht is niet meegerekend.
+
+        </details>{% endif %}{% endif %}
+      grid_options:
+        columns: full
+      type: markdown
+    column_span: 2
+    type: grid
+  title: Kosten
+  type: sections
+- icon: mdi:cog
+  max_columns: 2
+  path: instellingen
+  sections:
+  - type: grid
+    column_span: 2
+    cards:
+    - type: heading
+      heading: Controle
+      icon: mdi:clipboard-check-outline
+    - type: markdown
+      content: |-
+        {% set ns = namespace(fout=[], let=[], ok=[]) %}
+        {% set bz = 'sensor.strategie_bronnen' %}
+        {% set namen = {'zon_vandaag': 'Zonvoorspelling vandaag', 'zon_morgen': 'Zonvoorspelling morgen', 'zon_opbrengst': 'Zonne-opbrengst (meterstand)', 'net_verbruik': 'Afname van het net (meterstand)', 'net_teruglevering': 'Teruglevering aan het net (meterstand)'} %}
+        {% set verplicht = ['net_verbruik', 'net_teruglevering'] %}
+        {% if not has_value(bz) %}{% set ns.fout = ns.fout + ['Het bronnen-blok (sensor.strategie_bronnen) ontbreekt: staat batterijstrategie.yaml in /config/packages en is de YAML herladen?'] %}{% else %}
+        {% for k, naam in namen.items() %}{% set e = state_attr(bz, k) | string %}
+        {% if e in ['', 'None'] %}{% if k in verplicht %}{% set ns.fout = ns.fout + [naam ~ ': niet ingevuld in het bronnen-blok'] %}{% endif %}
+        {% elif not has_value(e) %}{% set ns.fout = ns.fout + [naam ~ ': ' ~ e ~ ' bestaat niet of is niet beschikbaar'] %}
+        {% elif k in ['zon_opbrengst', 'net_verbruik', 'net_teruglevering'] and state_attr(e, 'unit_of_measurement') not in ['Wh', 'kWh', 'MWh'] %}{% set ns.fout = ns.fout + [naam ~ ': ' ~ e ~ ' heeft eenheid ' ~ state_attr(e, 'unit_of_measurement') ~ ', verwacht Wh, kWh of MWh'] %}
+        {% endif %}{% endfor %}
+        {% endif %}
+        {% set mr = states.input_number.strategie_vermogen_bij_reeks is not none %}{% set bf = 'sensor.strategie_bronnen_fase' %}
+        {% if not mr %}{% set ns.ok = ns.ok + ['Aanvulling reeks en fasebeperking: niet geïnstalleerd (optioneel); de planner rekent met het max. oplaad- en ontlaadvermogen van Gielz'] %}{% elif not has_value(bf) %}{% set ns.fout = ns.fout + ['Aanvulling reeks: het fase-bronnenblok (sensor.strategie_bronnen_fase) ontbreekt: staat batterijstrategie_reeks.yaml in /config/packages en is de YAML herladen?'] %}{% else %}
+        {% set fs = state_attr(bf, 'stroom') | string %}{% set fv = state_attr(bf, 'spanning') | string %}{% set fm = states('input_number.strategie_max_fasestroom') %}
+        {% set leeg = [fs, fv] | select('in', ['', 'None']) | list | length %}
+        {% if leeg == 2 %}{% set ns.ok = ns.ok + ['Fasebeperking: niet ingesteld (geen begrenzing op de fase)'] %}{% elif leeg > 0 %}{% set ns.fout = ns.fout + ['Fasebeperking: vul beide fase-bronnen in (stroom en spanning), of laat ze allebei leeg'] %}{% elif not has_value(fs) %}{% set ns.fout = ns.fout + ['Fasebeperking: stroom ' ~ fs ~ ' bestaat niet of is niet beschikbaar'] %}{% elif not has_value(fv) %}{% set ns.fout = ns.fout + ['Fasebeperking: spanning ' ~ fv ~ ' bestaat niet of is niet beschikbaar'] %}{% elif not is_number(fm) %}{% set ns.fout = ns.fout + ['Fasebeperking: de maximale fasestroom (input_number.strategie_max_fasestroom) ontbreekt: staat de nieuwste batterijstrategie_reeks.yaml in /config/packages en is de YAML herladen?'] %}{% else %}{% if fm | float <= state_attr('input_number.strategie_max_fasestroom', 'min') | float(0) %}{% set ns.let = ns.let + ['Maximale fasestroom staat op het minimum (' ~ (fm | replace('.', ',')) ~ ' A): klopt dat?'] %}{% endif %}{% set ns.ok = ns.ok + ['Fasebeperking: maximaal ' ~ (fm | replace('.', ',')) ~ ' A op de fase (de stroomsensor moet een teken hebben: negatief bij teruglevering)'] %}{% endif %}
+        {% endif %}
+        {% if is_state('input_boolean.strategie_zonbonus_terugleveren', 'on') and states.sun.sun is none %}{% set ns.fout = ns.fout + ['Zonbonus staat aan, maar de integratie Zon (sun.sun) ontbreekt: voeg die toe via Instellingen > Apparaten en diensten, of zet de zonbonus uit'] %}{% endif %}
+        {% set ns.ok = ns.ok + ['Prijzen: ' ~ ('per uur (gemiddelde van 4 kwartieren)' if is_state('input_boolean.strategie_uurprijzen', 'on') else 'per kwartier')] %}
+        {% set np = states('input_text.dynamisch_nordpool_sensor') %}
+        {% if (state_attr(np, 'raw_today') or []) | length < 2 %}{% set ns.fout = ns.fout + ['Prijzen: de Nordpool-sensor uit Gielz (input_text.dynamisch_nordpool_sensor = ' ~ np ~ ') levert geen prijzen'] %}{% endif %}
+        {% for e, naam in [['sensor.strategie_prijzen', 'Prijzen'], ['sensor.strategie_invoer', 'Invoer (zon en verbruik)'], ['sensor.strategie_simulatie', 'Simulatie'], ['sensor.strategie_plan', 'Plan']] %}{% if not has_value(e) %}{% set ns.fout = ns.fout + [naam ~ ': niet beschikbaar'] %}{% endif %}{% endfor %}
+        {% set prof = states('input_text.strategie_verbruiksprofiel_per_uur') %}
+        {% if prof in ['', 'unknown'] %}{% set ns.let = ns.let + ['Verbruiksprofiel: nog leeg; wordt bij het eerste gemeten kwartier automatisch gevuld'] %}{% elif (prof.split(',') | select('is_number') | list | length) != 24 %}{% set ns.fout = ns.fout + ['Verbruiksprofiel: moet 24 getallen bevatten, gescheiden door komma’s'] %}{% endif %}
+        {% if states('input_number.strategie_profiel_leertempo') | float(0) == 0 %}{% set ns.let = ns.let + ['Leertempo verbruiksprofiel staat op 0: het profiel leert niet bij'] %}{% endif %}
+        {% for e, naam in [['input_number.strategie_btw', 'BTW'], ['input_number.strategie_energiebelasting', 'Energiebelasting'], ['input_number.strategie_opslag_leverancier', 'Opslag leverancier']] %}{% if states(e) | float(0) == 0 %}{% set ns.let = ns.let + [naam ~ ' staat op 0: klopt dat?'] %}{% endif %}{% endfor %}
+        {% for e, naam in ([['input_number.strategie_laadvermogen_planning', 'Laadvermogen los kwartier'], ['input_number.strategie_ontlaadvermogen_planning', 'Ontlaadvermogen los kwartier'], ['input_number.strategie_vermogen_bij_reeks', 'Vermogen bij reeks']] if mr else [['input_number.zendure_2400_ac_max_oplaadvermogen', 'Max. oplaadvermogen (Gielz)'], ['input_number.zendure_2400_ac_max_ontlaadvermogen', 'Max. ontlaadvermogen (Gielz)']]) %}{% if states(e) | float(0) <= state_attr(e, 'min') | float(0) %}{% set ns.let = ns.let + [naam ~ ' staat op het minimum (' ~ states(e) | int(0) ~ ' W): klopt dat?'] %}{% endif %}{% endfor %}
+        {% for e, naam in [['input_number.strategie_rendement_laden', 'Rendement laden'], ['input_number.strategie_rendement_ontladen', 'Rendement ontladen']] %}{% if states(e) | float(0) <= state_attr(e, 'min') | float(0) %}{% set ns.let = ns.let + [naam ~ ' staat op het minimum (' ~ states(e) ~ '%): klopt dat?'] %}{% endif %}{% endfor %}
+        {% for au, naam, bestand in [['automation.zendure_strategie_modus_sturen', 'Modus sturen', 'automatisering_modus_sturen.yaml'], ['automation.zendure_strategie_verbruik_meten_en_bijleren', 'Verbruik meten en bijleren', 'automatisering_verbruik_meten.yaml']] %}{% if states[au] is none %}{% set ns.fout = ns.fout + ['Automatisering ' ~ naam ~ ': ontbreekt (voeg ' ~ bestand ~ ' toe)'] %}{% elif not is_state(au, 'on') %}{% set ns.fout = ns.fout + ['Automatisering ' ~ naam ~ ': staat uit'] %}{% endif %}{% endfor %}{% set ka = 'automation.zendure_strategie_werkelijke_kosten_bijhouden' %}{% set ns.ok = ns.ok + ['Automatisering kosten bijhouden: ' ~ ('niet toegevoegd (optioneel)' if states[ka] is none else ('aan' if is_state(ka, 'on') else 'uit'))] %}
+        {% set va = 'automation.zendure_strategie_vermogen' %}{% set fa = 'automation.zendure_strategie_fasebeperking' %}
+        {% if states[fa] is not none %}{% set ns.fout = ns.fout + ['Automatisering fasebeperking: verouderd, verwijderen (vervangen door automatisering_vermogen.yaml uit de aanvulling)'] %}{% endif %}
+        {% if mr %}{% if states[va] is none %}{% set ns.let = ns.let + ['Automatisering vermogen: nog niet toegevoegd (voeg automatisering_vermogen.yaml toe zodra de instellingen van de aanvulling kloppen)'] %}{% elif not is_state(va, 'on') %}{% set ns.fout = ns.fout + ['Automatisering vermogen: staat uit'] %}{% else %}{% set ns.ok = ns.ok + ['Automatisering vermogen: aan'] %}{% endif %}{% elif states[va] is not none %}{% set ns.fout = ns.fout + ['Automatisering vermogen: hoort bij de aanvulling reeks, die niet geïnstalleerd is; verwijder hem'] %}{% endif %}
+        {% if ns.fout %}<ha-alert alert-type="error" title="Nog niet klaar">{{ ns.fout | join('<br>') }}</ha-alert>
+        {% endif %}{% if ns.let %}<ha-alert alert-type="warning" title="Controleer">{{ ns.let | join('<br>') }}</ha-alert>
+        {% endif %}{% if not ns.fout %}<ha-alert alert-type="success" title="Alles beschikbaar">De strategie heeft alles wat hij nodig heeft.{{ (' ' ~ ns.ok | join(' · ') ~ '.') if ns.ok else '' }} Strategie Actief staat {{ 'aan' if is_state('input_boolean.strategie_actief', 'on') else 'uit' }}.</ha-alert>{% else %}Zet Strategie Actief pas aan als hierboven geen rode melding meer staat.{% endif %}
+      grid_options:
+        columns: full
+  - cards:
+    - heading: Prijzen en beslissing
+      icon: mdi:currency-eur
+      type: heading
+    - entities:
+      - entity: input_number.strategie_opslag_leverancier
+        name: Opslag leverancier
+      - entity: input_number.strategie_exportvergoeding
+        name: Exportvergoeding (+) of exportkosten (−) per kWh
+      - entity: input_boolean.strategie_zonbonus_terugleveren
+        name: Zonbonus terugleveren (vereist de integratie Zon)
+      - entity: input_number.strategie_zonbonus_percentage
+        name: Zonbonus percentage (overdag, bij positieve prijs)
+      - entity: input_boolean.strategie_uurprijzen
+        name: Uurprijzen (gemiddelde van 4 kwartieren; aan als je leverancier per uur afrekent)
+      - entity: input_number.strategie_energiebelasting
+        name: Energiebelasting
+      - entity: input_number.strategie_btw
+        name: BTW
+      - entity: input_number.strategie_minimale_winstmarge
+        name: Minimale winstmarge
+      - entity: input_number.strategie_planblok_minuten
+        name: Lengte planblok (minuten, veelvoud van 15)
+      - entity: input_number.strategie_slijtagekosten
+        name: Slijtagekosten batterij per ontladen kWh
+      - entity: input_number.strategie_zon_voorzichtigheid
+        name: Voorzichtigheid zonvoorspelling (0% = middenschatting, 100% = pessimistisch)
+      type: entities
+    type: grid
+  - cards:
+    - heading: Vermogen
+      icon: mdi:flash
+      type: heading
+      visibility:
+      - condition: template
+        value_template: '{{ states.input_number.strategie_vermogen_bij_reeks is not none }}'
+    - entities:
+      - entity: input_number.strategie_laadvermogen_planning
+        name: Laadvermogen – los kwartier
+      - entity: input_number.strategie_ontlaadvermogen_planning
+        name: Ontlaadvermogen – los kwartier
+      - entity: input_number.strategie_vermogen_bij_reeks
+        name: Laad- en ontlaadvermogen – reeks
+      - entity: input_number.strategie_max_fasestroom
+        name: Maximale fasestroom (alleen met fase-bronnen ingevuld)
+      type: entities
+      visibility:
+      - condition: template
+        value_template: '{{ states.input_number.strategie_vermogen_bij_reeks is not none }}'
+    - heading: Rendement en verbruiksprofiel
+      icon: mdi:home-lightning-bolt
+      type: heading
+    - entities:
+      - entity: input_number.strategie_rendement_laden
+        name: Rendement laden
+      - entity: input_number.strategie_rendement_ontladen
+        name: Rendement ontladen
+      - entity: input_text.strategie_verbruiksprofiel_per_uur
+        name: Verbruiksprofiel per uur (W, uur 0 t/m 23, komma-gescheiden)
+      - entity: input_number.strategie_profiel_leertempo
+        name: Leertempo verbruiksprofiel (0 = niet bijleren, bv. tijdens vakantie)
+      type: entities
+    type: grid
+  title: Instellingen
+  type: sections
