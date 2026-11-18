@@ -10,7 +10,7 @@ Versie: 18 november 2026.
 
 ## Inhoud van het pakket
 
-De bestanden staan in twee mappen: [`basismodule/`](basismodule) met de basismodule die iedereen nodig heeft, en [`optioneel/`](optioneel) met per optie een eigen map.
+De bestanden staan in twee mappen: [`basismodule/`](basismodule) met de bestanden die iedereen nodig heeft, en [`optioneel/`](optioneel) met per optie een eigen map.
 
 ```
 basismodule/
