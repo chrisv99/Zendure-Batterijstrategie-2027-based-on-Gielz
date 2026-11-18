@@ -10,10 +10,10 @@ Versie: 18 november 2026.
 
 ## Inhoud van het pakket
 
-De bestanden staan in twee mappen: [`basis/`](basis) met de basismodule die iedereen nodig heeft, en [`optioneel/`](optioneel) met per optie een eigen map.
+De bestanden staan in twee mappen: [`basismodule/`](basismodule) met de basismodule die iedereen nodig heeft, en [`optioneel/`](optioneel) met per optie een eigen map.
 
 ```
-basis/
+basismodule/
   batterijstrategie.yaml                 pakket met alle rekensensoren, instellingen en opslag
   automatisering_modus_sturen.yaml       zet de Gielz-modus volgens het plan
   automatisering_verbruik_meten.yaml     meet elk kwartier en leert je verbruiksprofiel
@@ -63,7 +63,7 @@ homeassistant:
 
 ### 2. Het pakket plaatsen en je bronnen invullen
 
-Zet `basis/batterijstrategie.yaml` in `/config/packages/` in Home Assistant (het bestand zelf, niet de map). Open het bestand en vul **alleen** het blok `Strategie bronnen` in, direct onder `template:`:
+Zet `basismodule/batterijstrategie.yaml` in `/config/packages/` in Home Assistant (het bestand zelf, niet de map). Open het bestand en vul **alleen** het blok `Strategie bronnen` in, direct onder `template:`:
 
 | Bron | Wat | Voorbeeld | Leeg laten mag? |
 |---|---|---|---|
@@ -99,7 +99,7 @@ Herlaad daarna **Ontwikkelaarshulpmiddelen > YAML > Alle YAML-configuratie**.
 
 1. Ga naar **Instellingen > Dashboards > Dashboard toevoegen > Nieuw dashboard vanaf nul**.
 2. Open het nieuwe dashboard en kies rechtsboven **⋮ > Bewerken > ⋮ > Ruwe configuratie-editor**.
-3. Vervang alles door de inhoud van `basis/batterijstrategie_dashboard.yaml` en sla op.
+3. Vervang alles door de inhoud van `basismodule/batterijstrategie_dashboard.yaml` en sla op.
 
 ### 4. De instellingen invullen
 
@@ -109,8 +109,8 @@ Vul op het tabblad **Instellingen** van het dashboard de instellingen in (zie [I
 
 Ga voor elk bestand naar **Instellingen > Automatiseringen > Automatisering maken > Nieuwe automatisering > ⋮ > Bewerken in YAML**, vervang alles door de inhoud van het bestand en sla op:
 
-1. `basis/automatisering_modus_sturen.yaml`
-2. `basis/automatisering_verbruik_meten.yaml`
+1. `basismodule/automatisering_modus_sturen.yaml`
+2. `basismodule/automatisering_verbruik_meten.yaml`
 3. Optioneel: `optioneel/kosten-bijhouden/automatisering_kosten_bijhouden.yaml`
 
 Het verbruiksprofiel begint leeg. Bij het eerste gemeten kwartier vult *Verbruik meten en bijleren* het profiel, en daarna leert het elk kwartier bij.
