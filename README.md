@@ -10,15 +10,23 @@ Versie: 18 november 2026.
 
 ## Inhoud van het pakket
 
-| Bestand | Wat | Nodig? |
-|---|---|---|
-| `batterijstrategie.yaml` | Pakket met alle rekensensoren, instellingen en opslag | Ja |
-| `automatisering_modus_sturen.yaml` | Zet de Gielz-modus volgens het plan | Ja |
-| `automatisering_verbruik_meten.yaml` | Meet elk kwartier en leert je verbruiksprofiel | Ja |
-| `batterijstrategie_dashboard.yaml` | Dashboard met planning, kosten en instellingen | Aanbevolen |
-| `automatisering_kosten_bijhouden.yaml` | Houdt de werkelijke kosten en opbrengst bij | Optioneel |
-| `batterijstrategie_reeks.yaml` | Aanvulling: eigen vermogensplafonds, reeksvermogen en fasebeperking | Optioneel |
-| `automatisering_vermogen.yaml` | Hoort bij de aanvulling: stuurt het laad- en ontlaadvermogen | Alleen met de aanvulling |
+De bestanden staan in twee mappen: [`verplicht/`](verplicht) voor wat iedereen nodig heeft, en [`optioneel/`](optioneel) met per optie een eigen map.
+
+```
+verplicht/
+  batterijstrategie.yaml                 pakket met alle rekensensoren, instellingen en opslag
+  automatisering_modus_sturen.yaml       zet de Gielz-modus volgens het plan
+  automatisering_verbruik_meten.yaml     meet elk kwartier en leert je verbruiksprofiel
+  batterijstrategie_dashboard.yaml       dashboard met planning, kosten, instellingen en controle
+optioneel/
+  kosten-bijhouden/
+    automatisering_kosten_bijhouden.yaml houdt de werkelijke kosten en opbrengst bij
+  reeks-en-fasebeperking/
+    batterijstrategie_reeks.yaml         eigen vermogensplafonds, reeksvermogen en fasebeperking
+    automatisering_vermogen.yaml         stuurt het laad- en ontlaadvermogen (hoort bij het bestand hierboven)
+```
+
+Het dashboard is nodig omdat je daar de instellingen invult en het blok Controle laat zien of alles klopt. De optionele mappen staan beschreven onder [Optionele modules](#optionele-modules).
 
 ---
 
@@ -55,7 +63,7 @@ homeassistant:
 
 ### 2. Het pakket plaatsen en je bronnen invullen
 
-Zet `batterijstrategie.yaml` in `/config/packages/`. Open het bestand en vul **alleen** het blok `Strategie bronnen` in, direct onder `template:`:
+Zet `verplicht/batterijstrategie.yaml` in `/config/packages/` in Home Assistant (het bestand zelf, niet de map). Open het bestand en vul **alleen** het blok `Strategie bronnen` in, direct onder `template:`:
 
 | Bron | Wat | Voorbeeld | Leeg laten mag? |
 |---|---|---|---|
@@ -91,7 +99,7 @@ Herlaad daarna **Ontwikkelaarshulpmiddelen > YAML > Alle YAML-configuratie**.
 
 1. Ga naar **Instellingen > Dashboards > Dashboard toevoegen > Nieuw dashboard vanaf nul**.
 2. Open het nieuwe dashboard en kies rechtsboven **⋮ > Bewerken > ⋮ > Ruwe configuratie-editor**.
-3. Vervang alles door de inhoud van `batterijstrategie_dashboard.yaml` en sla op.
+3. Vervang alles door de inhoud van `verplicht/batterijstrategie_dashboard.yaml` en sla op.
 
 ### 4. De instellingen invullen
 
@@ -101,9 +109,9 @@ Vul op het tabblad **Instellingen** van het dashboard de instellingen in (zie [I
 
 Ga voor elk bestand naar **Instellingen > Automatiseringen > Automatisering maken > Nieuwe automatisering > ⋮ > Bewerken in YAML**, vervang alles door de inhoud van het bestand en sla op:
 
-1. `automatisering_modus_sturen.yaml`
-2. `automatisering_verbruik_meten.yaml`
-3. Optioneel: `automatisering_kosten_bijhouden.yaml`
+1. `verplicht/automatisering_modus_sturen.yaml`
+2. `verplicht/automatisering_verbruik_meten.yaml`
+3. Optioneel: `optioneel/kosten-bijhouden/automatisering_kosten_bijhouden.yaml`
 
 Het verbruiksprofiel begint leeg. Bij het eerste gemeten kwartier vult *Verbruik meten en bijleren* het profiel, en daarna leert het elk kwartier bij.
 
@@ -191,6 +199,8 @@ Allemaal op het tabblad **Instellingen** van het dashboard.
 
 ### Kosten bijhouden
 
+Map: [`optioneel/kosten-bijhouden/`](optioneel/kosten-bijhouden)
+
 `automatisering_kosten_bijhouden.yaml` telt elk kwartier de werkelijke energiestromen op en waardeert ze tegen de prijs van dat kwartier:
 - laden uit het net;
 - laden met zon;
@@ -206,6 +216,8 @@ Het resultaat staat op het tabblad **Kosten**, in het blok *Werkelijk*, voor van
 
 ### Aanvulling reeks en fasebeperking
 
+Map: [`optioneel/reeks-en-fasebeperking/`](optioneel/reeks-en-fasebeperking)
+
 Voor wie eigen vermogensplafonds wil, met een lager vermogen bij langere reeksen snel laden of ontladen en/of een begrenzing op de fasestroom.
 
 **Wat het toevoegt**
@@ -216,7 +228,7 @@ Voor wie eigen vermogensplafonds wil, met een lager vermogen bij langere reeksen
 - **De automatisering *vermogen*:** stuurt het max. oplaad- en ontlaadvermogen van Gielz.
 
 **Installeren**
-1. Zet `batterijstrategie_reeks.yaml` naast `batterijstrategie.yaml` in `/config/packages/`. Vul de fase-bronnen in, of laat ze allebei leeg als je geen fasebegrenzing wilt. Bijvoorbeeld met een HomeWizard P1, met de batterij op fase 1:
+1. Zet `batterijstrategie_reeks.yaml` uit deze map naast `batterijstrategie.yaml` in `/config/packages/`. Vul de fase-bronnen in, of laat ze allebei leeg als je geen fasebegrenzing wilt. Bijvoorbeeld met een HomeWizard P1, met de batterij op fase 1:
 
    ```yaml
            attributes:
