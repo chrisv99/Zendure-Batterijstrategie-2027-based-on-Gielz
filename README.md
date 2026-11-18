@@ -10,7 +10,7 @@ Versie: 18 november 2026.
 
 ## Inhoud van het pakket
 
-De bestanden staan in twee mappen: [`basismodule/`](basismodule) met de bestanden die iedereen nodig heeft, en [`optioneel/`](optioneel) met per optie een eigen map.
+De bestanden staan in twee mappen: [`basismodule/`](basismodule) met de bestanden die iedereen nodig heeft, en [`optionelemodules/`](optionelemodules) met per optie een eigen map.
 
 ```
 basismodule/
@@ -18,7 +18,7 @@ basismodule/
   automatisering_modus_sturen.yaml       zet de Gielz-modus volgens het plan
   automatisering_verbruik_meten.yaml     meet elk kwartier en leert je verbruiksprofiel
   batterijstrategie_dashboard.yaml       dashboard met planning, kosten, instellingen en controle
-optioneel/
+optionelemodules/
   kosten-bijhouden/
     automatisering_kosten_bijhouden.yaml houdt de werkelijke kosten en opbrengst bij
   reeks-en-fasebeperking/
@@ -111,7 +111,7 @@ Ga voor elk bestand naar **Instellingen > Automatiseringen > Automatisering make
 
 1. `basismodule/automatisering_modus_sturen.yaml`
 2. `basismodule/automatisering_verbruik_meten.yaml`
-3. Optioneel: `optioneel/kosten-bijhouden/automatisering_kosten_bijhouden.yaml`
+3. Optioneel: `optionelemodules/kosten-bijhouden/automatisering_kosten_bijhouden.yaml`
 
 Het verbruiksprofiel begint leeg. Bij het eerste gemeten kwartier vult *Verbruik meten en bijleren* het profiel, en daarna leert het elk kwartier bij.
 
@@ -199,7 +199,7 @@ Allemaal op het tabblad **Instellingen** van het dashboard.
 
 ### Kosten bijhouden
 
-Map: [`optioneel/kosten-bijhouden/`](optioneel/kosten-bijhouden)
+Map: [`optionelemodules/kosten-bijhouden/`](optionelemodules/kosten-bijhouden)
 
 `automatisering_kosten_bijhouden.yaml` telt elk kwartier de werkelijke energiestromen op en waardeert ze tegen de prijs van dat kwartier:
 - laden uit het net;
@@ -216,7 +216,7 @@ Het resultaat staat op het tabblad **Kosten**, in het blok *Werkelijk*, voor van
 
 ### Aanvulling reeks en fasebeperking
 
-Map: [`optioneel/reeks-en-fasebeperking/`](optioneel/reeks-en-fasebeperking)
+Map: [`optionelemodules/reeks-en-fasebeperking/`](optionelemodules/reeks-en-fasebeperking)
 
 Voor wie eigen vermogensplafonds wil, met een lager vermogen bij langere reeksen snel laden of ontladen en/of een begrenzing op de fasestroom.
 
