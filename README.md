@@ -198,7 +198,7 @@ Allemaal op het tabblad **Instellingen** van het dashboard.
 - terugleveren;
 - verbruik uit het net.
 
-Het resultaat staat op het tabblad **Kosten**, in het blok *Werkelijk*, voor vandaag en de vier dagen daarvoor. De automatisering verandert niets aan de batterij. Zonder deze automatisering werkt de strategie gewoon. Het blok *Werkelijk* meldt dan dat de kosten niet worden bijgehouden; de verwachting voor vandaag en morgen blijft wel zichtbaar.
+Het resultaat staat op het tabblad **Kosten**, in het blok *Werkelijk*, voor vandaag en de vier dagen daarvoor. De automatisering verandert niets aan de batterij. Zonder deze automatisering werkt de strategie gewoon. Het blok *Werkelijk* meldt dan dat de kosten niet worden bijgehouden; de verwachting voor vandaag en morgen blijft wel zichtbaar. Staat de automatisering wel in Home Assistant maar is hij uitgezet, dan toont het blok *Werkelijk* een oranje melding dat de cijfers niet meer worden bijgewerkt, en het blok Controle ook.
 
 | Verwacht: rest van vandaag en morgen | Werkelijk: vandaag en de afgelopen 4 dagen |
 |---|---|
